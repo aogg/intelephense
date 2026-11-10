@@ -30,7 +30,7 @@ export const OWN_FEATURES: OwnFeatureSet = {
   documentLink: true,
   typeDefinition: true,
   declaration: false,
-  implementation: false,
+  implementation: true,
   typeHierarchy: false,
   rename: false,
   codeAction: false,
@@ -55,6 +55,7 @@ export function mergeCapabilities(officialCaps: Record<string, unknown>, own: Ow
   override('selectionRangeProvider', {}, own.selectionRange);
   override('documentLinkProvider', { resolveProvider: false }, own.documentLink);
   override('typeDefinitionProvider', true, own.typeDefinition);
+  override('implementationProvider', true, own.implementation);
 
   return caps;
 }

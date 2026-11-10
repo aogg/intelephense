@@ -19,6 +19,7 @@ import {
   type LocationLike,
 } from '../features/navigation';
 import { navigationTypeDefinition } from '../features/typeDefinition';
+import { navigationImplementation } from '../features/implementation';
 import { computeFoldingRanges, type FoldingRange } from '../features/folding';
 import { computeSelectionRanges, type SelectionRange } from '../features/selectionRange';
 import { computeDocumentLinks, type DocumentLink } from '../features/documentLink';
@@ -171,6 +172,10 @@ export class Engine {
 
   async typeDefinition(params: DefinitionParamsLike): Promise<LocationLike[] | null> {
     return navigationTypeDefinition(this, params);
+  }
+
+  async implementation(params: DefinitionParamsLike): Promise<LocationLike[] | null> {
+    return navigationImplementation(this, params);
   }
 
   foldingRanges(uri: string): FoldingRange[] {

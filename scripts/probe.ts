@@ -224,6 +224,49 @@ async function main(): Promise<void> {
         : `无命中：${summarize(typeDefResp.result)}（期望 ${authClsUri.split('/').pop()} line=${authDeclPos.line}）`,
     );
 
+    // implementation：Driver 抽象类（token 存储驱动）→ Mysql/Redis 子类；抽象方法 set → 两处实现
+    const driverAbs = path.join(ZUODIAN_ROOT, 'application', 'common', 'library', 'token', 'Driver.php');
+    const driverUri = 'file://' + driverAbs;
+    const driverText = fs.readFileSync(driverAbs, 'utf8');
+    client.notify('textDocument/didOpen', {
+      textDocument: { uri: driverUri, languageId: 'php', version: 1, text: driverText },
+    });
+    const driverClassPos = locate(driverText, 'abstract class Driver');
+    const implClassResp = await client.send('textDocument/implementation', {
+      textDocument: { uri: driverUri },
+      position: { line: driverClassPos.line, character: driverClassPos.character + 'abstract class '.length + 2 },
+    }).done;
+    const implClasses: any[] = Array.isArray(implClassResp.result) ? implClassResp.result : implClassResp.result ? [implClassResp.result] : [];
+    const mysqlHit = implClasses.find((d) => typeof d?.uri === 'string' && d.uri.endsWith('token/driver/Mysql.php'));
+    const redisHit = implClasses.find((d) => typeof d?.uri === 'string' && d.uri.endsWith('token/driver/Redis.php'));
+    record(
+      'implementation(Driver 抽象类) → Mysql + Redis 子类（跨文件）',
+      !!mysqlHit && !!redisHit,
+      !!mysqlHit && !!redisHit
+        ? `结果数=${implClasses.length}：Mysql.php @ 0-based line=${mysqlHit.range.start.line}；Redis.php @ 0-based line=${redisHit.range.start.line}`
+        : `结果=${summarize(implClasses)}`,
+    );
+
+    const mysqlText = fs.readFileSync(path.join(ZUODIAN_ROOT, 'application', 'common', 'library', 'token', 'driver', 'Mysql.php'), 'utf8');
+    const redisText = fs.readFileSync(path.join(ZUODIAN_ROOT, 'application', 'common', 'library', 'token', 'driver', 'Redis.php'), 'utf8');
+    const mysqlSetLine = locate(mysqlText, 'public function set').line;
+    const redisSetLine = locate(redisText, 'public function set').line;
+    const driverSetPos = locate(driverText, 'abstract function set');
+    const implMethodResp = await client.send('textDocument/implementation', {
+      textDocument: { uri: driverUri },
+      position: { line: driverSetPos.line, character: driverSetPos.character + 'abstract function '.length + 1 },
+    }).done;
+    const implMethods: any[] = Array.isArray(implMethodResp.result) ? implMethodResp.result : implMethodResp.result ? [implMethodResp.result] : [];
+    const mSet = implMethods.find((d) => typeof d?.uri === 'string' && d.uri.endsWith('driver/Mysql.php') && d.range?.start?.line === mysqlSetLine);
+    const rSet = implMethods.find((d) => typeof d?.uri === 'string' && d.uri.endsWith('driver/Redis.php') && d.range?.start?.line === redisSetLine);
+    record(
+      'implementation(Driver::set 抽象方法) → Mysql::set + Redis::set 方法声明',
+      !!mSet && !!rSet,
+      !!mSet && !!rSet
+        ? `结果数=${implMethods.length}：Mysql.php line=${mSet.range.start.line}（0基）；Redis.php line=${rSet.range.start.line}（0基）`
+        : `结果=${summarize(implMethods)}（期望 Mysql line=${mysqlSetLine}、Redis line=${redisSetLine}，0基）`,
+    );
+
     // 3) completion: $this-> 包含 auth（继承自 Backend）
     const thisArrow = locate(productText, '$this->model = new ProductModel();');
     const completionPos = { line: thisArrow.line, character: thisArrow.character + '$this->'.length };

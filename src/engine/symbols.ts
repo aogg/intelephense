@@ -32,6 +32,7 @@ export interface MethodSym extends SymLoc {
   name: string;
   visibility: string;
   isStatic: boolean;
+  isAbstract: boolean;
   params: { name: string; typeRaw?: string; defaultRaw?: string }[];
   returnTypeRaw?: string;
   docblock?: DocblockInfo;
@@ -94,6 +95,8 @@ export class WorkspaceIndex {
   private scanned = false;
   private scanning: Promise<void> | undefined;
   psr4: { prefix: string; dir: string }[] = [];
+  /** 扫描根下所有 .php 文件（含不声明类符号的文件，rename/引用收集用） */
+  allFiles = new Set<string>();
 
   constructor(public readonly rootInfo: WorkspacePaths) {}
 
@@ -107,6 +110,7 @@ export class WorkspaceIndex {
     if (!this.scanning) {
       this.scanning = (async () => {
         this.readComposer();
+        this.allFiles.clear();
         const entries: ScanEntry[] = [];
         const roots = new Set<string>();
         for (const { dir } of this.psr4) roots.add(path.resolve(this.root, dir));
@@ -170,6 +174,7 @@ export class WorkspaceIndex {
             fqns.push(fqn);
           }
           if (fqns.length > 0) out.push({ uri: pathToFileURL(full).href, fqns });
+          this.allFiles.add(pathToFileURL(full).href);
         } catch {
           // 读不了的文件跳过
         }
@@ -201,10 +206,16 @@ export class WorkspaceIndex {
     this.scanned = false;
     this.scanning = undefined;
     this.scan.clear();
+    this.allFiles.clear();
   }
 
   lookupFqnUri(fqn: string): string | undefined {
     return this.scan.get(fqn.toLowerCase());
+  }
+
+  /** 扫描快照（fqn 小写 → uri），跨文件遍历入口 */
+  scanEntries(): [string, string][] {
+    return [...this.scan.entries()];
   }
 }
 
@@ -408,6 +419,7 @@ function collectMember(uri: string, member: any, sym: ClassSym, doc: ParsedDoc):
       selectionRange: selectRangeOf(member, uri),
       visibility: typeof member.visibility === 'string' ? member.visibility : 'public',
       isStatic: !!member.isStatic,
+      isAbstract: !!member.isAbstract,
       params,
       returnTypeRaw: rawTypeOf(member.type) ?? undefined,
       docblock,
