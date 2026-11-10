@@ -141,11 +141,12 @@ export class Engine {
   // ---------- 跨文件类解析 ----------
 
   async resolveClass(fqn: string): Promise<ClassSym | undefined> {
-    const key = fqn.toLowerCase();
+    // 索引键无前导 \（ns\Name），而 docblock 类型常写 \FQN —— 先归一再去查，否则全限定写法永远 miss
+    const key = fqn.replace(/^\\+/, '').toLowerCase();
     const hit = this.index.byFqn.get(key);
     if (hit) return hit;
     await this.index.ensureScan();
-    const uri = this.index.lookupFqnUri(fqn);
+    const uri = this.index.lookupFqnUri(key);
     if (!uri) return undefined;
     if (this.resolving.has(uri)) return undefined; // 重入保护
     this.resolving.add(uri);

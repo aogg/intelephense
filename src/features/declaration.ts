@@ -7,10 +7,10 @@
  *  - 普通属性 → 属性声明行（含父类/trait 来源，findMember 已落声明文件）。
  */
 
-import { byteIndexOf, docblockCommentNode, lspRangeForJsSpan, plainName } from '../engine/ast';
+import { plainName } from '../engine/ast';
 import { resolveTypeRaw } from '../engine/resolver';
 import type { ClassSym } from '../engine/symbols';
-import { hitAtPosition, type NavigationEngine, type DefinitionParamsLike, type LocationLike } from './navigation';
+import { docblockPropertyTagRange, hitAtPosition, type NavigationEngine, type DefinitionParamsLike, type LocationLike } from './navigation';
 import { implementationsOfMember } from './implementation';
 
 export async function navigationDeclaration(engine: NavigationEngine, params: DefinitionParamsLike): Promise<LocationLike[] | null> {
@@ -41,8 +41,9 @@ export async function navigationDeclaration(engine: NavigationEngine, params: De
   if (ref.kind === 'property' && ref.property) {
     const p = ref.property;
     if (p.originVirtual) {
-      // B 通道：声明处即类 docblock 的 @property 标签
-      const tag = docblockPropertyTagRange(doc, ref.owner, p.name);
+      // B 通道：声明处即宿主类 docblock 的 @property 标签（跨文件父链时宿主文档另取，不能拿当前文档找宿主类）
+      const ownerDoc = ref.owner.uri === doc.uri ? doc : await engine.getDoc(ref.owner.uri);
+      const tag = ownerDoc ? docblockPropertyTagRange(ownerDoc, ref.owner, p.name) : undefined;
       if (tag) return [tag];
     }
     return [{ uri: p.uri, range: p.selectionRange }];
@@ -137,28 +138,4 @@ async function firstSuperMethodDeclaration(engine: NavigationEngine, owner: Clas
     }
   }
   return undefined;
-}
-
-/** 类 docblock 中 @property[-read|-write] Type $name 标签内 $name 的精确 range */
-export function docblockPropertyTagRange(doc: any, cls: ClassSym, propName: string): LocationLike | undefined {
-  const classNodes: { sym: ClassSym; node: any }[] = doc.classNodes ?? [];
-  const entry = classNodes.find((e) => e.sym.fqn.toLowerCase() === cls.fqn.toLowerCase());
-  if (!entry) return undefined;
-  const cmt = docblockCommentNode(entry.node);
-  if (!cmt) return undefined;
-  const safe = escapeRegExp(plainName({ name: propName }) ?? propName);
-  const re = new RegExp(`@property(?:-read|-write)?\\s+[^\\n]*?(\\$${safe})\\b`);
-  const m = re.exec(cmt.value);
-  if (!m) return undefined;
-  const nameIdxInMatch = m[0].indexOf(m[1]);
-  if (nameIdxInMatch < 0) return undefined;
-  // 注释起点字节偏移 → JS 索引后再累加 JS 空间的匹配索引（注释内含多字节字符时二者不可混加）
-  const commentStartJs = byteIndexOf(doc, cmt.startOffset);
-  const startJs = commentStartJs + m.index + nameIdxInMatch;
-  const endJs = startJs + m[1].length;
-  return { uri: doc.uri, range: lspRangeForJsSpan(doc, startJs, endJs) };
-}
-
-export function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

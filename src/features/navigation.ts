@@ -4,7 +4,7 @@
  * 接收者类型（$this→类作用域 / 变量赋值推断 / 链式成员类型）→ 成员符号与类型。
  */
 
-import { walk, plainName, locToRange } from '../engine/ast';
+import { walk, plainName, locToRange, byteIndexOf, docblockCommentNode, lspRangeForJsSpan } from '../engine/ast';
 import type { ParsedDoc } from '../engine/ast';
 import { effectiveMembers, findMember, memberTypes, enclosingClass, resolveReceiverFqns, type MemberRef, type ParsedDocLike, type EngineContext } from '../engine/member';
 import { resolveTypeRaw } from '../engine/resolver';
@@ -156,7 +156,15 @@ export async function navigationDefinition(engine: NavigationEngine, params: Def
   }
   const ref = hit.ref;
   if (ref.kind === 'property' && ref.property) {
-    return [{ uri: ref.property.uri, range: ref.property.selectionRange }];
+    const p = ref.property;
+    if (p.originVirtual) {
+      // B 通道：虚拟属性无实体声明，定义处即宿主类 docblock 的 @property 标签
+      // （跨文件父链时宿主文档另取——当前文档里没有宿主类节点，同文件场景行为不变）
+      const ownerDoc = ref.owner.uri === doc.uri ? doc : await engine.getDoc(ref.owner.uri);
+      const tag = ownerDoc ? docblockPropertyTagRange(ownerDoc, ref.owner, p.name) : undefined;
+      if (tag) return [tag];
+    }
+    return [{ uri: p.uri, range: p.selectionRange }];
   }
   if (ref.kind === 'method' && ref.method) {
     return [{ uri: ref.method.uri, range: ref.method.selectionRange }];
@@ -348,4 +356,28 @@ function typedPrefix(doc: ParsedDoc, line: number, character: number): string {
   const lineText = doc.text.slice(lineIndex[Math.min(line, lineIndex.length - 1)], lineIndex[Math.min(line, lineIndex.length - 1)] + character);
   const m = /[A-Za-z_\x80-\xff][\w\x80-\xff]*$/.exec(lineText);
   return m ? m[0] : '';
+}
+
+/** 类 docblock 中 @property[-read|-write] Type $name 标签内 $name 的精确 range（definition/declaration 共用的虚拟属性声明点） */
+export function docblockPropertyTagRange(doc: any, cls: ClassSym, propName: string): LocationLike | undefined {
+  const classNodes: { sym: ClassSym; node: any }[] = (doc as any).classNodes ?? [];
+  const entry = classNodes.find((e) => e.sym.fqn.toLowerCase() === cls.fqn.toLowerCase());
+  if (!entry) return undefined;
+  const cmt = docblockCommentNode(entry.node);
+  if (!cmt) return undefined;
+  const safe = escapeRegExp(plainName({ name: propName }) ?? propName);
+  const re = new RegExp(`@property(?:-read|-write)?\\s+[^\\n]*?(\\$${safe})\\b`);
+  const m = re.exec(cmt.value);
+  if (!m) return undefined;
+  const nameIdxInMatch = m[0].indexOf(m[1]);
+  if (nameIdxInMatch < 0) return undefined;
+  // 注释起点字节偏移 → JS 索引后再累加 JS 空间的匹配索引（注释内含多字节字符时二者不可混加）
+  const commentStartJs = byteIndexOf(doc, cmt.startOffset);
+  const startJs = commentStartJs + m.index + nameIdxInMatch;
+  const endJs = startJs + m[1].length;
+  return { uri: doc.uri, range: lspRangeForJsSpan(doc, startJs, endJs) };
+}
+
+export function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
