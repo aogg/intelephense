@@ -129,3 +129,84 @@ export function plainName(node: any): string | undefined {
   if (node.name && typeof node.name.name === 'string') return node.name.name;
   return undefined;
 }
+
+// ---------- 字节偏移换算（php-parser loc.offset 为 UTF-8 字节偏移；docblock/字符串内定位必须换算成 JS 索引） ----------
+
+const byteMaps = new WeakMap<ParsedDoc, number[] | null>();
+
+/** doc.text 的字节偏移 → JS 字符串索引（纯 ASCII 文档恒等） */
+export function byteIndexOf(doc: ParsedDoc, byteOffset: number): number {
+  let map = byteMaps.get(doc);
+  if (map === undefined) {
+    const text = doc.text;
+    let needs = false;
+    for (let i = 0; i < text.length; i++) {
+      if (text.charCodeAt(i) > 127) {
+        needs = true;
+        break;
+      }
+    }
+    if (!needs) {
+      map = null;
+    } else {
+      const m: number[] = new Array(text.length + 1);
+      let b = 0;
+      for (let i = 0; i < text.length; i++) {
+        m[i] = b;
+        const c = text.charCodeAt(i);
+        if (c < 0x80) b += 1;
+        else if (c < 0x800) b += 2;
+        else if (c >= 0xd800 && c < 0xdc00) b += 4; // 代理对首（4 字节码点）
+        else if (c >= 0xdc00 && c < 0xe000) b += 0; // 代理对尾
+        else b += 3;
+      }
+      m[text.length] = b;
+      map = m;
+    }
+    byteMaps.set(doc, map);
+  }
+  if (!map) return byteOffset;
+  let lo = 0;
+  let hi = map.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (map[mid] <= byteOffset) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
+}
+
+/** JS 字符串索引区间 → LSP Range（经 lineIndex） */
+export function lspRangeForJsSpan(
+  doc: ParsedDoc,
+  startJs: number,
+  endJs: number,
+): { start: { line: number; character: number }; end: { line: number; character: number } } {
+  return { start: offsetAt(doc, startJs), end: offsetAt(doc, endJs) };
+}
+
+function offsetAt(doc: ParsedDoc, jsIndex: number): { line: number; character: number } {
+  const starts = doc.lineIndex;
+  const idx = Math.max(0, Math.min(jsIndex, doc.text.length));
+  let lo = 0;
+  let hi = starts.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (starts[mid] <= idx) lo = mid;
+    else hi = mid - 1;
+  }
+  return { line: lo, character: idx - starts[lo] };
+}
+
+/** 语句节点的 docblock 注释节点（含字节偏移，供 docblock 内定位） */
+export function docblockCommentNode(node: any): { value: string; startOffset: number; endOffset: number } | undefined {
+  const leading = node && node.leadingComments;
+  if (!Array.isArray(leading)) return undefined;
+  for (let i = leading.length - 1; i >= 0; i--) {
+    const c = leading[i];
+    if (c && c.kind === 'commentblock' && typeof c.value === 'string' && c.value.startsWith('/**') && c.loc && typeof c.loc.start?.offset === 'number') {
+      return { value: c.value, startOffset: c.loc.start.offset, endOffset: c.loc.end?.offset ?? c.loc.start.offset };
+    }
+  }
+  return undefined;
+}

@@ -267,6 +267,75 @@ async function main(): Promise<void> {
         : `结果=${summarize(implMethods)}（期望 Mysql line=${mysqlSetLine}、Redis line=${redisSetLine}，0基）`,
     );
 
+    // declaration：Mysql::set 实现处 → Driver 抽象声明；抽象声明处 → 实现列表（双向）；虚拟属性 → docblock @property 标签
+    const driverSetLine = driverSetPos.line;
+    const declImplResp = await client.send('textDocument/declaration', {
+      textDocument: { uri: 'file://' + path.join(ZUODIAN_ROOT, 'application', 'common', 'library', 'token', 'driver', 'Mysql.php') },
+      position: { line: mysqlSetLine, character: locate(mysqlText, 'public function set').character + 'public function '.length + 2 },
+    }).done;
+    const declImpls: any[] = Array.isArray(declImplResp.result) ? declImplResp.result : declImplResp.result ? [declImplResp.result] : [];
+    const declHit = declImpls.find((d) => typeof d?.uri === 'string' && d.uri.endsWith('token/Driver.php') && d.range?.start?.line === driverSetLine);
+    record(
+      'declaration(Mysql::set 实现) → Driver.php 抽象方法声明',
+      !!declHit,
+      !!declHit
+        ? `Driver.php @ 0-based line=${declHit.range.start.line}（1-based ${declHit.range.start.line + 1}）`
+        : `结果=${summarize(declImpls)}（期望 Driver.php line=${driverSetLine}，0基）`,
+    );
+
+    const declBidiResp = await client.send('textDocument/declaration', {
+      textDocument: { uri: driverUri },
+      position: { line: driverSetLine, character: driverSetPos.character + 'abstract function '.length + 2 },
+    }).done;
+    const declBidis: any[] = Array.isArray(declBidiResp.result) ? declBidiResp.result : declBidiResp.result ? [declBidiResp.result] : [];
+    const bidiOk = !!declBidis.find((d) => d?.uri?.endsWith('driver/Mysql.php') && d.range?.start?.line === mysqlSetLine) && !!declBidis.find((d) => d?.uri?.endsWith('driver/Redis.php') && d.range?.start?.line === redisSetLine);
+    record(
+      'declaration(Driver::set 抽象声明) → 实现列表（双向）',
+      bidiOk,
+      bidiOk ? `结果数=${declBidis.length}，含 Mysql::set 与 Redis::set 声明位置` : `结果=${summarize(declBidis)}`,
+    );
+
+    const declDocUri = 'file://' + path.join(ZUODIAN_ROOT, 'probe-decl-test.php');
+    const declDocText = `<?php
+namespace app\\common\\library;
+
+/**
+ * 探针基类（docblock @property 声明通道）
+ * @property ProbeMagicService $magic 魔法服务
+ */
+class ProbeDeclBase
+{
+    public function useMagic()
+    {
+        return $this->magic->ping();
+    }
+}
+`;
+    client.notify('textDocument/didOpen', {
+      textDocument: { uri: declDocUri, languageId: 'php', version: 1, text: declDocText },
+    });
+    const magicPos = locate(declDocText, '$this->magic->ping()');
+    const magicChar = { line: magicPos.line, character: magicPos.character + '$this->'.length };
+    const declDocResp = await client.send('textDocument/declaration', { textDocument: { uri: declDocUri }, position: magicChar }).done;
+    const declDocs: any[] = Array.isArray(declDocResp.result) ? declDocResp.result : declDocResp.result ? [declDocResp.result] : [];
+    const propTagLine = locate(declDocText, '@property ProbeMagicService $magic').line;
+    const docHit = declDocs.find((d) => d?.uri === declDocUri && d.range?.start?.line === propTagLine);
+    let docHitTextOk = false;
+    if (docHit) {
+      const li: number[] = [0];
+      for (let i = 0; i < declDocText.length; i++) if (declDocText.charCodeAt(i) === 10) li.push(i + 1);
+      const s = li[docHit.range.start.line] + docHit.range.start.character;
+      const e = li[docHit.range.end.line] + docHit.range.end.character;
+      docHitTextOk = declDocText.slice(s, e) === '$magic';
+    }
+    record(
+      'declaration(虚拟属性 $this->magic) → docblock @property 标签 range',
+      !!docHit && docHitTextOk,
+      docHit && docHitTextOk
+        ? `range @ 0-based line=${docHit.range.start.line} char=${docHit.range.start.character}..${docHit.range.end.character}，命中文本 "$magic"`
+        : `结果=${summarize(declDocs)}（期望 @property 行=${propTagLine}，0基）`,
+    );
+
     // 3) completion: $this-> 包含 auth（继承自 Backend）
     const thisArrow = locate(productText, '$this->model = new ProductModel();');
     const completionPos = { line: thisArrow.line, character: thisArrow.character + '$this->'.length };

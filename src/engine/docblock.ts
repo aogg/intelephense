@@ -82,14 +82,16 @@ function parseTag(line: string, info: DocblockInfo): void {
 
   switch (tag) {
     case 'var': {
-      const vm = /^([\s\S]*?)(?:\s+(\$\w+))?$/.exec(rest);
-      if (vm) info.vars.push({ type: vm[1].trim(), name: vm[2] ? vm[2].slice(1) : undefined });
+      // 形态：@var Type | @var Type $name | @var Type $name 描述（描述不入类型）
+      const vm = /^([^\s$][\w\\|?\[\]<>,\s]*?)(?:\s+(\$\w+))?(?:\s+\S.*)?$/.exec(rest);
+      if (vm && vm[1] && vm[1].trim()) info.vars.push({ type: vm[1].trim(), name: vm[2] ? vm[2].slice(1) : undefined });
       break;
     }
     case 'property':
     case 'property-read':
     case 'property-write': {
-      const pm = /^(\S+)\s+\$(\w+)\s*$/.exec(rest);
+      // 形态：@property Type $name [描述]（描述常见于真实项目 docblock，不能因锚定丢失标签）
+      const pm = /^(\S+)\s+\$(\w+)(?:\s+.*)?$/.exec(rest);
       if (pm) {
         info.properties.push({
           type: pm[1],
@@ -101,8 +103,9 @@ function parseTag(line: string, info: DocblockInfo): void {
       break;
     }
     case 'mixin': {
-      const mm = /^(\S+)(?:\s+(\$\w+|\w+))?$/.exec(rest);
-      if (mm) info.mixins.push({ type: mm[1], alias: mm[2] ? mm[2].replace(/^\$/, '') : undefined });
+      // 形态：@mixin Type [alias] [描述]
+      const mm = /^(\S+)(?:\s+(\$\w+|\w+))?(?:\s+.*)?$/.exec(rest);
+      if (mm && mm[1]) info.mixins.push({ type: mm[1], alias: mm[2] ? mm[2].replace(/^\$/, '') : undefined });
       break;
     }
     case 'method': {

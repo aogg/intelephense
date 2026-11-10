@@ -18,6 +18,7 @@ const OWN_HANDLED = new Set([
   'textDocument/documentLink',
   'textDocument/typeDefinition',
   'textDocument/implementation',
+  'textDocument/declaration',
 ]);
 
 /** 双引擎合并处理（转发官方 + 引擎并行） */
@@ -166,6 +167,8 @@ export class Router {
         return this.engine.typeDefinition(params);
       case 'textDocument/implementation':
         return this.engine.implementation(params);
+      case 'textDocument/declaration':
+        return this.engine.declaration(params);
       default:
         return null;
     }
