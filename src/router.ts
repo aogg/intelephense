@@ -43,6 +43,8 @@ interface PendingMerged {
 export class Router {
   /** id → 待合并的自研结果（官方响应回来时取用） */
   private pendingMerged = new Map<number | string, PendingMerged>();
+  /** initialize 请求的 id：仅该 id 的官方响应走能力合并，其余官方响应一律原样透传（references/documentSymbol 等数组响应不可破坏） */
+  private initializeRequestId: number | string | undefined = undefined;
   /** 客户端最近一次 workspace/didChangeConfiguration 的 settings（自留镜像；转发不受影响） */
   lastClientSettings: unknown = undefined;
 
@@ -70,6 +72,7 @@ export class Router {
       }
       if (method === 'initialize') {
         this.setupWorkspace(msg);
+        this.initializeRequestId = id; // 记录请求 id，响应配对时才做能力合并
         this.sendToServer(msg);
         return;
       }
@@ -123,11 +126,12 @@ export class Router {
   onServerMessage(msg: JsonRpcMessage): void {
     const id = msg.id as number | string | undefined;
 
-    // initialize 响应：能力合并 + serverInfo
+    // initialize 响应（与记录的请求 id 配对的成功响应）：能力合并 + serverInfo
     if (id !== undefined && !('method' in msg) && (msg.result || msg.error)) {
       const pending = this.pendingMerged.get(id as number);
-      if (!pending && this.isInitializeResponse(msg)) {
-        const result = (msg.result ?? {}) as Record<string, unknown>;
+      if (!pending && this.isInitializeResponse(id) && msg.result !== undefined) {
+        this.initializeRequestId = undefined; // id 已消费：后续同 id 响应（异常/重放）不再合并
+        const result = msg.result as Record<string, unknown>;
         try {
           msg = { ...msg, result: mergeInitializeResponse(result, OWN_FEATURES, VERSION) };
         } catch {
@@ -142,12 +146,14 @@ export class Router {
       }
     }
 
-    // 其余一切（publishDiagnostics、window/*、registerCapability 等）原样转发，绝不过滤
+    // 其余一切（references/documentSymbol/workspaceSymbol/formatting 响应、publishDiagnostics、
+    // window/*、registerCapability 等）原样转发，绝不过滤
     this.sendToClient(msg);
   }
 
-  private isInitializeResponse(msg: JsonRpcMessage): boolean {
-    return true; // pendingMerged 未命中且带 result 的响应只可能是 initialize（首个请求）
+  /** initialize 响应判定：响应 id 与记录的 initialize 请求 id 配对（initialize 为会话首个请求，响应一一对应） */
+  private isInitializeResponse(id: number | string): boolean {
+    return this.initializeRequestId !== undefined && id === this.initializeRequestId;
   }
 
   private async handleOwnRequest(id: number, method: string, msg: JsonRpcMessage): Promise<void> {
