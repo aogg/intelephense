@@ -1227,8 +1227,8 @@ class Sub extends Base
     const cfgOkT4 = Array.isArray(symResp.result) && syms.length > 0 && !symResp.error;
     record(
       'didChangeConfiguration(intelephense 环境设置) → 不炸且后续官方请求正常（documentSymbol 有结果）',
-      cfgOk,
-      cfgOk ? `settings 含 intelephense.environment.phpVersion=7.4 + 未知段；documentSymbol 返回 ${syms.length} 个符号（透传官方存活）` : `resp=${summarize(symResp)}`,
+      cfgOkT4,
+      cfgOkT4 ? `settings 含 intelephense.environment.phpVersion=7.4 + 未知段；documentSymbol 返回 ${syms.length} 个符号（透传官方存活）` : `resp=${summarize(symResp)}`,
     );
 
     // fixture 清理（探针不留痕）
