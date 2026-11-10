@@ -22,6 +22,8 @@ const OWN_HANDLED = new Set([
   'textDocument/prepareTypeHierarchy',
   'typeHierarchy/supertypes',
   'typeHierarchy/subtypes',
+  'textDocument/rename',
+  'textDocument/prepareRename',
 ]);
 
 /** 双引擎合并处理（转发官方 + 引擎并行） */
@@ -178,6 +180,10 @@ export class Router {
         return this.engine.typeHierarchySupertypes(params.item);
       case 'typeHierarchy/subtypes':
         return this.engine.typeHierarchySubtypes(params.item);
+      case 'textDocument/prepareRename':
+        return this.engine.prepareRename(params);
+      case 'textDocument/rename':
+        return this.engine.rename(params);
       default:
         return null;
     }

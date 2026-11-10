@@ -16,6 +16,10 @@ export interface NavigationEngine {
   index: import('../engine/symbols').WorkspaceIndex;
   getDoc(uri: string): Promise<(import('../engine/ast').ParsedDoc & { classNodes?: { sym: ClassSym; node: any }[] }) | undefined>;
   resolveClass(fqn: string): Promise<ClassSym | undefined>;
+  /** 全工作区扫描入口：内存镜像 + 磁盘扫描文件并集（rename 用） */
+  allKnownUris(): string[];
+  /** 不触发解析的缓存查看（rename 候选预筛用） */
+  peekDoc(uri: string): (import('../engine/ast').ParsedDoc & { classNodes?: { sym: ClassSym; node: any }[] }) | undefined;
 }
 
 export interface DefinitionParamsLike {

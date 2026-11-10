@@ -22,6 +22,7 @@ import { navigationTypeDefinition } from '../features/typeDefinition';
 import { navigationImplementation } from '../features/implementation';
 import { navigationDeclaration } from '../features/declaration';
 import { prepareTypeHierarchy, typeHierarchySupertypes, typeHierarchySubtypes, type TypeHierarchyItem } from '../features/typeHierarchy';
+import { prepareRename, rename, type PrepareRenameResult, type RenameWorkspaceEdit, type RenameParamsLike } from '../features/rename';
 import { computeFoldingRanges, type FoldingRange } from '../features/folding';
 import { computeSelectionRanges, type SelectionRange } from '../features/selectionRange';
 import { computeDocumentLinks, type DocumentLink } from '../features/documentLink';
@@ -158,6 +159,18 @@ export class Engine {
     this.index.invalidateAll();
   }
 
+  /** rename 等全工作区扫描入口：内存镜像文档 + 磁盘扫描文件并集 */
+  allKnownUris(): string[] {
+    const out = new Set<string>(this.docs.keys());
+    for (const u of this.index.allFiles) out.add(u);
+    return [...out];
+  }
+
+  /** 不触发解析的缓存查看（rename 候选预筛用；镜像文档的内存文本以 cached.text 为准） */
+  peekDoc(uri: string): ParsedDocExt | undefined {
+    return this.docs.get(uri);
+  }
+
   // ---------- features 门面 ----------
 
   async definition(params: DefinitionParamsLike): Promise<LocationLike[] | null> {
@@ -194,6 +207,14 @@ export class Engine {
 
   typeHierarchySubtypes(item: TypeHierarchyItem): Promise<TypeHierarchyItem[] | null> {
     return typeHierarchySubtypes(this, item);
+  }
+
+  prepareRename(params: DefinitionParamsLike): Promise<PrepareRenameResult | null> {
+    return prepareRename(this, params);
+  }
+
+  rename(params: RenameParamsLike): Promise<RenameWorkspaceEdit | null> {
+    return rename(this, params);
   }
 
   foldingRanges(uri: string): FoldingRange[] {

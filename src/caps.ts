@@ -32,7 +32,7 @@ export const OWN_FEATURES: OwnFeatureSet = {
   declaration: true,
   implementation: true,
   typeHierarchy: true,
-  rename: false,
+  rename: true,
   codeAction: false,
 };
 
@@ -58,6 +58,7 @@ export function mergeCapabilities(officialCaps: Record<string, unknown>, own: Ow
   override('implementationProvider', true, own.implementation);
   override('declarationProvider', true, own.declaration);
   override('typeHierarchyProvider', true, own.typeHierarchy);
+  override('renameProvider', { prepareProvider: true }, own.rename);
 
   return caps;
 }

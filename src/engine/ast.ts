@@ -130,50 +130,16 @@ export function plainName(node: any): string | undefined {
   return undefined;
 }
 
-// ---------- 字节偏移换算（php-parser loc.offset 为 UTF-8 字节偏移；docblock/字符串内定位必须换算成 JS 索引） ----------
+// ---------- 偏移换算（实测 php-parser 3.7 withPositions 的 loc.offset 为 JS 字符索引，非 UTF-8 字节偏移；
+// 中文等多字节字符不改变偏移语义。byteIndexOf 保留恒等实现以维持既有调用点 API 稳定） ----------
 
-const byteMaps = new WeakMap<ParsedDoc, number[] | null>();
-
-/** doc.text 的字节偏移 → JS 字符串索引（纯 ASCII 文档恒等） */
+/**
+ * php-parser 节点偏移 → doc.text 的 JS 字符串索引。
+ * 3.7.0 实测：loc.start.offset 与 doc.text 的 indexOf 结果一致（含中文文档），故为恒等映射。
+ */
 export function byteIndexOf(doc: ParsedDoc, byteOffset: number): number {
-  let map = byteMaps.get(doc);
-  if (map === undefined) {
-    const text = doc.text;
-    let needs = false;
-    for (let i = 0; i < text.length; i++) {
-      if (text.charCodeAt(i) > 127) {
-        needs = true;
-        break;
-      }
-    }
-    if (!needs) {
-      map = null;
-    } else {
-      const m: number[] = new Array(text.length + 1);
-      let b = 0;
-      for (let i = 0; i < text.length; i++) {
-        m[i] = b;
-        const c = text.charCodeAt(i);
-        if (c < 0x80) b += 1;
-        else if (c < 0x800) b += 2;
-        else if (c >= 0xd800 && c < 0xdc00) b += 4; // 代理对首（4 字节码点）
-        else if (c >= 0xdc00 && c < 0xe000) b += 0; // 代理对尾
-        else b += 3;
-      }
-      m[text.length] = b;
-      map = m;
-    }
-    byteMaps.set(doc, map);
-  }
-  if (!map) return byteOffset;
-  let lo = 0;
-  let hi = map.length - 1;
-  while (lo < hi) {
-    const mid = (lo + hi + 1) >> 1;
-    if (map[mid] <= byteOffset) lo = mid;
-    else hi = mid - 1;
-  }
-  return lo;
+  void doc;
+  return byteOffset;
 }
 
 /** JS 字符串索引区间 → LSP Range（经 lineIndex） */
