@@ -1,7 +1,7 @@
 /**
  * engine/member.ts：有效成员表 + $this->xxx 解析（architecture.md §4.5/§4.7）。
- * 合并顺序：本类声明 → trait 展开（adaptation 语义）→ 类 docblock @property → 父类链逐级向上。
- * @mixin 本阶段解析存储、不合并成员（T4）。
+ * 合并顺序：本类声明 → trait 展开（adaptation 语义）→ 类 docblock @mixin（T4 合并）→
+ * 类 docblock @property → 父类链逐级向上。
  */
 
 import { walk, rawTypeOf, nodeContains, plainName } from './ast';
@@ -87,6 +87,23 @@ export async function effectiveMembers(cls: ClassSym, ctx: EngineContext, depth 
       finalRef.method = { ...finalRef.method, visibility: rename.visibility };
     }
     put(finalRef);
+  }
+
+  // 类 docblock @mixin（T4）：mixin 目标的属性/方法并入有效成员表（自身/trait 成员优先；目标类不存在诚实忽略）
+  // 查找顺序（architecture.md §4.7）：本类声明 → trait 展开 → @mixin 合并 → 类 docblock @property → 父类链
+  if (cls.docblock && cls.docblock.mixins.length > 0) {
+    for (const mx of cls.docblock.mixins) {
+      const fqn = resolveTypeRaw(mx.type, file, cls.fqn)[0];
+      if (!fqn) continue;
+      const target = await ctx.resolveClass(fqn);
+      if (!target) continue; // mixin 目标不存在：诚实忽略
+      if (target.fqn.toLowerCase() === cls.fqn.toLowerCase()) continue; // 自引用防环（深度上限在递归里兜底）
+      const mixinMembers = await effectiveMembers(target, ctx, depth + 1);
+      for (const [name, ref] of mixinMembers) {
+        if (out.has(name)) continue; // 多 mixin 依序合并、自身成员优先：已占位不覆盖
+        out.set(name, { ...ref, origin: `mixin:${target.fqn}` });
+      }
+    }
   }
 
   // 类 docblock @property（B 通道虚拟属性）

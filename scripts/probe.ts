@@ -1109,6 +1109,102 @@ class Sub extends Base
       `flag="${flagLabel}" fire="${fireLabel}" pick="${pickLabel === '' ? '(空，隐藏)' : pickLabel}"；hints 数=${(await hintsOf('Sub.php')).length}≤500=${hintLimit}`,
     );
 
+    // ---------- 13) T4 @mixin 合并：成员通道 completion/definition + rename mixin 通道 + 嵌入语境 ----------
+    const mmLine = mainLines.findIndex((l) => l.includes("$this->mixMethod(1"));
+    const mixMethodTokPos = { line: mmLine, character: mainLines[mmLine].indexOf('mixMethod') + 2 };
+    const compThisPos = { line: mmLine, character: mainLines[mmLine].indexOf('$this->mixMethod') + '$this->'.length };
+
+    const compMain = await client.send('textDocument/completion', { textDocument: { uri: t4('MixMain.php') }, position: compThisPos }).done;
+    const compMainItems: any[] = Array.isArray(compMain.result) ? compMain.result : compMain.result?.items ?? [];
+    const mixMethodItem = compMainItems.find((it) => it?.label === 'mixMethod');
+    const virtItem = compMainItems.find((it) => it?.label === 'virt');
+    const mixinCompOk =
+      !!mixMethodItem && typeof mixMethodItem?.detail === 'string' && mixMethodItem.detail.startsWith('mixin:app\\probe\\t4\\MixTarget') && !!virtItem;
+    record(
+      'completion($this->) @mixin 合并 → mixMethod（origin=mixin:MixTarget）与 @property virt 均在列',
+      mixinCompOk,
+      mixinCompOk
+        ? `mixMethod detail="${mixMethodItem.detail}"；总项数=${compMainItems.length}（含 trait log 与父类 handle）`
+        : `items=${summarize(compMainItems.map((i) => i?.label))}`,
+    );
+
+    const mixDef = await client.send('textDocument/definition', { textDocument: { uri: t4('MixMain.php') }, position: mixMethodTokPos }).done;
+    const mixDefs: any[] = Array.isArray(mixDef.result) ? mixDef.result : mixDef.result ? [mixDef.result] : [];
+    const mixTargetDeclLine = t4Texts['MixTarget.php'].split('\n').findIndex((l) => l.includes('public function mixMethod'));
+    const mixDefHit = mixDefs.find((d) => typeof d?.uri === 'string' && d.uri.endsWith('probe/t4/MixTarget.php') && d.range?.start?.line === mixTargetDeclLine);
+    record(
+      'definition($this->mixMethod) → 经 mixin 通道跳 MixTarget.php 声明',
+      !!mixDefHit,
+      mixDefHit ? `MixTarget.php @ 0-based line=${mixDefHit.range.start.line}（1-based ${mixTargetDeclLine + 1}）` : `结果=${summarize(mixDef.result)}`,
+    );
+
+    // codeLens：mixMethod 引用计数（mixin 通道 + 嵌入语境）：mixCall 1 + pick 1 + Sub.render 2（含 <?= ?> 内联块）= 4
+    const mtLensesProbe = await lensOf('MixTarget.php');
+    const mixMethodLens = mtLensesProbe.find((l) => l.data?.kind === 'method-refs' && l.data?.member === 'mixMethod');
+    const mixMethodRefs = mixMethodLens ? (await resolveLens(mixMethodLens)).command?.title : undefined;
+    record(
+      'codeLens/resolve(mixMethod) → 4 处引用（mixin 通道 + 嵌入 <?= ?> 内联块全覆盖）',
+      mixMethodRefs === '4 处引用',
+      `title=${summarize(mixMethodRefs)}（MixMain 2 处 + Sub 常规 1 处 + Sub <?= ?> 1 处）`,
+    );
+
+    // rename mixin 通道：改 MixTarget::mixMethod → 使用方（经 @mixin 的 MixMain + Sub 内联块）引用同步更新
+    const mixTargetLines = t4Texts['MixTarget.php'].split('\n');
+    const mtDeclLine = mixTargetLines.findIndex((l) => l.includes('public function mixMethod'));
+    const mtPos = { line: mtDeclLine, character: mixTargetLines[mtDeclLine].indexOf('mixMethod') + 2 };
+    const mixRen = await client.send('textDocument/rename', { textDocument: { uri: t4('MixTarget.php') }, position: mtPos, newName: 'blendMethod' }).done;
+    const mixChanges: any[] = Array.isArray(mixRen.result?.documentChanges) ? mixRen.result.documentChanges.filter((c: any) => c.kind === 'edit') : [];
+    const applyTextEdits = (text: string, edits: any[]): string => {
+      const starts: number[] = [0];
+      for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) starts.push(i + 1);
+      const at = (p: any) => starts[Math.min(p.line, starts.length - 1)] + p.character;
+      let t = text;
+      for (const e of [...edits].sort((a: any, b: any) => at(b.range.start) - at(a.range.start))) {
+        const s = at(e.range.start);
+        const en = at(e.range.end);
+        t = t.slice(0, s) + e.newText + t.slice(en);
+      }
+      return t;
+    };
+    // 按 URI 建 key（rename 编辑按 URI 分组）
+    const mixApplied: Record<string, string> = {};
+    for (const [f, text] of Object.entries(t4Texts)) mixApplied[t4(f)] = text;
+    for (const c of mixChanges) mixApplied[c.textDocument.uri] = applyTextEdits(mixApplied[c.textDocument.uri] ?? '', c.edits);
+    const mainApplied = mixApplied[t4('MixMain.php')] ?? '';
+    const subApplied = mixApplied[t4('Sub.php')] ?? '';
+    const mixRenameOk =
+      mainApplied.includes('$this->blendMethod(1') &&
+      mainApplied.includes('$t->blendMethod(2') &&
+      subApplied.includes("$main->blendMethod(3, 'c')") &&
+      subApplied.includes("$main->blendMethod(4, 'd')") &&
+      !/\bmixMethod\b/.test(mainApplied) &&
+      !/\bmixMethod\b/.test(subApplied) &&
+      (t4Texts['MixTarget.php'].match(/mixMethod/g) ?? []).length >= 0 &&
+      mixApplied[t4('MixTarget.php')].includes('public function blendMethod(');
+    record(
+      'rename(@mixin 成员) → 使用方经 mixin 通道引用全更新（MixMain 2 处 + Sub 常规/内联块 2 处），旧名零残留',
+      mixRenameOk,
+      mixRenameOk
+        ? `编辑文件数=${mixChanges.length}；\$this->blendMethod + \$t->blendMethod + \$main->blendMethod(3)/(4) 命中；mixMethod 残留=0`
+        : `main 有 blend=${mainApplied.includes('blendMethod')}，sub 内联块=${subApplied.includes('blendMethod(4')}，残留=${/\\bmixMethod\\b/.test(mainApplied) || /\\bmixMethod\\b/.test(subApplied)}`,
+    );
+
+    // 嵌入 HTML/JS 语境（vip §13 务实子集）：双引号字符串插值 "{$m->mixProp}" 属性引用改名 + heredoc 内插值
+    const propDeclLine = t4Texts['MixTarget.php'].split('\n').findIndex((l) => l.includes('public $mixProp'));
+    const propPos = { line: propDeclLine, character: t4Texts['MixTarget.php'].split('\n')[propDeclLine].indexOf('mixProp') + 2 };
+    const propRen = await client.send('textDocument/rename', { textDocument: { uri: t4('MixTarget.php') }, position: propPos, newName: 'blendProp' }).done;
+    const propChanges: any[] = Array.isArray(propRen.result?.documentChanges) ? propRen.result.documentChanges.filter((c: any) => c.kind === 'edit') : [];
+    const propApplied: Record<string, string> = {};
+    for (const [f, text] of Object.entries(t4Texts)) propApplied[t4(f)] = text;
+    for (const c of propChanges) propApplied[c.textDocument.uri] = applyTextEdits(propApplied[c.textDocument.uri] ?? '', c.edits);
+    const subPropApplied = propApplied[t4('Sub.php')] ?? '';
+    const propRenameOk = subPropApplied.includes('"user {$m->blendProp}"') && !subPropApplied.includes('mixProp');
+    record(
+      'rename(嵌入语境) → 双引号字符串插值 "{$m->mixProp}" 内属性引用更新（php-parser encapsed 表达式节点）',
+      propRenameOk,
+      propRenameOk ? `Sub.php 插值更新为 "{$m->blendProp}"，mixProp 残留=0` : `sub=${summarize(subPropApplied.split('\n').find((l) => l.includes('blendProp') || l.includes('mixProp')))}`,
+    );
+
     // fixture 清理（探针不留痕）
     try {
       fs.rmSync(REN_DIR, { recursive: true, force: true });

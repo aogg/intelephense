@@ -252,10 +252,11 @@ function memberToItem(ref: MemberRef): Record<string, unknown> {
   if (ref.kind === 'method' && ref.method) {
     const m = ref.method;
     const sig = m.params.map((p) => `$${p.name}${p.defaultRaw ? ' = ' + p.defaultRaw : ''}`).join(', ');
+    const originPrefix = ref.origin.startsWith('parent:') || ref.origin.startsWith('mixin:') || ref.origin.startsWith('trait:') ? ref.origin + ' → ' : '';
     return {
       label: m.name,
       kind: 2, // Method
-      detail: `${ref.origin.startsWith('parent:') ? ref.origin + ' → ' : ''}${ref.owner.name}::${m.name}(${sig})`,
+      detail: `${originPrefix}${ref.owner.name}::${m.name}(${sig})`,
       sortText: `0_${m.name}`,
     };
   }

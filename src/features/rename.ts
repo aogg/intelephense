@@ -633,8 +633,36 @@ async function receiverRelated(engine: import('./navigation').NavigationEngine, 
     const cls = await engine.resolveClass(fqn);
     if (!cls) continue;
     if (await relatedToFamily(engine, cls, family)) return true;
+    // mixin 通道（T4）：接收者类 docblock @mixin（递归展开）目标命中继承族 → 使用方经 mixin 通道的引用同属一族。
+    // 只扩命中、不加声明：mixin 合并发生在成员解析层（member.ts effectiveMembers），改名声明仍只族内实体。
+    const mixins = await mixinTargets(engine, cls);
+    for (const m of mixins) {
+      if (family.lower.has(m)) return true;
+    }
   }
   return false;
+}
+
+/** 类的 @mixin 目标集合（docblock @mixin 递归展开；防环 + 深度限制；目标类不存在诚实忽略） */
+export async function mixinTargets(engine: import('./navigation').NavigationEngine, cls: ClassSym, depth = 0, seen?: Set<string>): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (depth > 5) return out;
+  const visited = seen ?? new Set<string>();
+  const key = cls.fqn.toLowerCase();
+  if (visited.has(key)) return out;
+  visited.add(key);
+  if (!cls.docblock) return out;
+  const file = engine.index.files.get(cls.uri);
+  for (const mx of cls.docblock.mixins) {
+    const fqn = resolveTypeRaw(mx.type, file, cls.fqn)[0];
+    if (!fqn) continue;
+    out.add(fqn.toLowerCase());
+    const target = await engine.resolveClass(fqn);
+    if (target) {
+      for (const t of await mixinTargets(engine, target, depth + 1, visited)) out.add(t);
+    }
+  }
+  return out;
 }
 
 async function renameMethod(engine: import('./navigation').NavigationEngine, owner: ClassSym, method: MethodSym, newName: string, edits: FileEdits): Promise<void> {
