@@ -43,6 +43,8 @@ interface PendingMerged {
 export class Router {
   /** id → 待合并的自研结果（官方响应回来时取用） */
   private pendingMerged = new Map<number | string, PendingMerged>();
+  /** 客户端最近一次 workspace/didChangeConfiguration 的 settings（自留镜像；转发不受影响） */
+  lastClientSettings: unknown = undefined;
 
   constructor(
     private engine: Engine,
@@ -101,7 +103,9 @@ export class Router {
           this.engine.invalidateScan();
           break;
         case 'workspace/didChangeConfiguration':
-          // resync-on-configuration=true：客户端会重发；透传官方（自留开关 T3+ 再用）
+          // php.toml resync-on-configuration=true：客户端会重发。原样转发官方（不拦截不过滤），
+          // 同时自留一份 settings（含 intelephense 段等客户端环境设置，供后续自研开关如 premiumPassthrough 读取）。
+          this.lastClientSettings = (msg.params as { settings?: unknown } | undefined)?.settings;
           break;
         default:
           break;
@@ -264,4 +268,4 @@ export class Router {
   }
 }
 
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';

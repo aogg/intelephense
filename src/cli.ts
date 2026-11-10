@@ -22,6 +22,19 @@ function resolveOfficialServer(): string {
   }
 }
 
+// openidea php.toml 两种拉起方式等价：`node dist/cli.js --stdio` 与 bin 脚本（package.json bin.intelephense）。
+// 无参数 = 默认 stdio（php.toml args=["--stdio"] 透传场景与省略参数场景行为一致）；
+// 未知参数仅 stderr 提示不阻断（保持 stdout 帧流纯净，协议通道绝不写日志）。
+const argv = process.argv.slice(2);
+for (const arg of argv) {
+  if (arg === '--stdio') continue; // 官方子进程固定以 --stdio 拉起，此参数在此仅为兼容显式传入
+  if (arg === '--version' || arg === '-v') {
+    process.stdout.write('intelephense-openidea 0.3.0\n');
+    process.exit(0);
+  }
+  process.stderr.write(`[intelephense-openidea] 未识别参数 ${arg}（忽略；默认以 stdio 模式运行）\n`);
+}
+
 const official: ChildProcess = spawn(process.execPath, [resolveOfficialServer(), '--stdio'], {
   stdio: ['pipe', 'pipe', 'inherit'],
 });

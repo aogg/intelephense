@@ -1,6 +1,6 @@
 {
   "name": "intelephense-openidea",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Intelephense middleware distribution for openidea editor. Architecture: the official intelephense npm package is used as-is as a dependency (free-tier capabilities), while our own TypeScript code runs as an LSP middleware on stdio that forwards messages to the official server and intercepts/merges responses and serverCapabilities. Premium-equivalent features (rename, type hierarchy, ...) are re-implemented by ourselves; no deobfuscation, no license bypass, no modification of official package files.",
   "private": true,
   "license": "UNLICENSED",

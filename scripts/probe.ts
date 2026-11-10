@@ -1205,6 +1205,32 @@ class Sub extends Base
       propRenameOk ? `Sub.php 插值更新为 "{$m->blendProp}"，mixProp 残留=0` : `sub=${summarize(subPropApplied.split('\n').find((l) => l.includes('blendProp') || l.includes('mixProp')))}`,
     );
 
+    // ---------- 14) T4 php.toml 兼容：serverInfo 0.3.0 + T4 provider 注册 + didChangeConfiguration 转发 ----------
+    const capsT4Ok =
+      serverInfo?.version === '0.3.0' &&
+      caps.codeLensProvider?.resolveProvider === true &&
+      caps.inlayHintProvider?.resolveProvider === true;
+    record(
+      'initialize(T4) → serverInfo 0.3.0 + codeLensProvider/inlayHintProvider（resolveProvider）自研注册',
+      capsT4Ok,
+      capsT4Ok
+        ? `version=${serverInfo?.version} codeLensProvider=${summarize(caps.codeLensProvider)} inlayHintProvider=${summarize(caps.inlayHintProvider)}`
+        : `serverInfo=${summarize(serverInfo)} codeLens=${summarize(caps.codeLensProvider)} inlayHint=${summarize(caps.inlayHintProvider)}`,
+    );
+
+    // php.toml resync-on-configuration=true：configuration 段含 intelephense 环境设置 → 中间件不炸、原样转发官方
+    client.notify('workspace/didChangeConfiguration', {
+      settings: { intelephense: { environment: { phpVersion: '7.4', phpVersionOverride: null } }, probing: true },
+    });
+    const symResp = await client.send('textDocument/documentSymbol', { textDocument: { uri: PRODUCT_URI } }).done;
+    const syms: any[] = Array.isArray(symResp.result) ? symResp.result : symResp.result?.items ?? symResp.result?.symbols ?? [];
+    const cfgOkT4 = Array.isArray(symResp.result) && syms.length > 0 && !symResp.error;
+    record(
+      'didChangeConfiguration(intelephense 环境设置) → 不炸且后续官方请求正常（documentSymbol 有结果）',
+      cfgOk,
+      cfgOk ? `settings 含 intelephense.environment.phpVersion=7.4 + 未知段；documentSymbol 返回 ${syms.length} 个符号（透传官方存活）` : `resp=${summarize(symResp)}`,
+    );
+
     // fixture 清理（探针不留痕）
     try {
       fs.rmSync(REN_DIR, { recursive: true, force: true });
