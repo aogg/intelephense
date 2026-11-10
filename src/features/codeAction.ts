@@ -495,8 +495,8 @@ function functionPhpdocTags(fnNode: any, doc: ParsedDoc, engine: NavigationEngin
   return tags;
 }
 
-/** 方法 @return 推断：returnTypeRaw 直接用；否则扫描 return 表达式 */
-async function inferReturnDoc(engine: NavigationEngine, doc: ParsedDoc, cls: ClassSym, m: MethodSym): Promise<string | undefined> {
+/** 方法/函数 @return 推断：returnTypeRaw 直接用；否则扫描 return 表达式。T4 inlayHint 复用（cls 仅提供 self/static 解析上下文，可为空） */
+export async function inferReturnDoc(engine: NavigationEngine, doc: ParsedDoc, cls: ClassSym | undefined, m: MethodSym): Promise<string | undefined> {
   if (m.returnTypeRaw) return m.returnTypeRaw;
   const body = m.astNode?.body;
   if (!body) return undefined;
@@ -519,7 +519,7 @@ async function inferReturnDoc(engine: NavigationEngine, doc: ParsedDoc, cls: Cla
 }
 
 /** 单个 return 表达式的类型字符串集合 */
-async function returnExprTypes(engine: NavigationEngine, doc: ParsedDoc, cls: ClassSym, expr: any): Promise<string[]> {
+async function returnExprTypes(engine: NavigationEngine, doc: ParsedDoc, cls: ClassSym | undefined, expr: any): Promise<string[]> {
   if (!expr) return []; // return; → 无值
   const file = engine.index.files.get(doc.uri);
   switch (expr.kind) {
@@ -543,7 +543,7 @@ async function returnExprTypes(engine: NavigationEngine, doc: ParsedDoc, cls: Cl
     case 'new': {
       const raw = rawTypeOf(expr.what);
       if (!raw) return [];
-      const fqns = resolveTypeRaw(raw, file, cls.fqn);
+      const fqns = resolveTypeRaw(raw, file, cls?.fqn);
       return fqns.map((f) => docTypeForFqn(f, file));
     }
     case 'call': {
@@ -552,7 +552,7 @@ async function returnExprTypes(engine: NavigationEngine, doc: ParsedDoc, cls: Cl
       if (what?.kind !== 'staticlookup') return [];
       const classRaw = rawTypeOf(what.what);
       if (!classRaw) return [];
-      const classFqn = resolveTypeRaw(classRaw, file, cls.fqn)[0];
+      const classFqn = resolveTypeRaw(classRaw, file, cls?.fqn)[0];
       if (!classFqn) return [];
       const offset = what.offset;
       const methodName = offset && offset.kind === 'call' ? offset.what && offset.what.name : offset && offset.name;
@@ -586,11 +586,12 @@ async function returnExprTypes(engine: NavigationEngine, doc: ParsedDoc, cls: Cl
 }
 
 /** $this->prop 形式 return：属性类型走 memberTypes 通道（异步） */
-async function returnExprTypesAsync(engine: NavigationEngine, doc: ParsedDoc, cls: ClassSym, expr: any): Promise<string[]> {
+async function returnExprTypesAsync(engine: NavigationEngine, doc: ParsedDoc, cls: ClassSym | undefined, expr: any): Promise<string[]> {
   const what = expr.what;
   if (!what || what.kind !== 'variable' || what.name !== 'this') return [];
   const name = expr.offset && (typeof expr.offset.name === 'string' ? expr.offset.name : expr.offset.name?.name);
   if (typeof name !== 'string') return [];
+  if (!cls) return [];
   const ref = await findMember(cls, name, engine.ctx);
   if (!ref) return [];
   const t = await memberTypes(ref, engine.ctx);

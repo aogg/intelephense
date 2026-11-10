@@ -1059,6 +1059,56 @@ class Sub extends Base
       zeroOk ? 'class-subtypes/method-refs 均无 command' : `subtypes=${summarize(mainSubtypes.command)} mixCall=${summarize(mixCallRefs.command)}`,
     );
 
+    // ---------- 12) T4 inlayHint：参数名/返回类型/闭包三类（resolve 惰性 + 上限保护） ----------
+    const hintsOf = (f: string): Promise<any[]> =>
+      client.send('textDocument/inlayHint', { textDocument: { uri: t4(f) } }).done.then((r: any) => (Array.isArray(r.result) ? r.result : []));
+    const resolveHint = async (h: any): Promise<any> => (await client.send('inlayHint/resolve', h).done).result;
+
+    const subHints = await hintsOf('Sub.php');
+    const subDocText = t4Texts['Sub.php'];
+    const subLines = subDocText.split('\n');
+    const pickPosLine = subLines.findIndex((l) => l.includes("$main->pick('n', 2);"));
+    const pickNamedLine = subLines.findIndex((l) => l.includes("$main->pick(name: 'n', w: 2);"));
+    const fnLine = subLines.findIndex((l) => l.includes('$fn = function'));
+    const dblLine = subLines.findIndex((l) => l.includes('$dbl = fn('));
+    const paramOnPick = subHints.filter((h) => h.position.line === pickPosLine && h.data?.kind === 'param');
+    const paramOnNamed = subHints.filter((h) => h.position.line === pickNamedLine && h.data?.kind === 'param');
+    const closureHints = subHints.filter((h) => (h.position.line === fnLine || h.position.line === dblLine) && h.data?.kind === 'closure');
+    record(
+      'inlayHint(Sub) compute → 位置实参 hint 骨架（具名参数保守跳过），闭包/箭头函数赋值目标 hint',
+      paramOnPick.length === 2 && paramOnNamed.length === 0 && closureHints.length === 2,
+      `pick 位置参数 hint=${paramOnPick.length}；具名参数 hint=${paramOnNamed.length}（应 0）；closure/arrowfn hint=${closureHints.length} @ line ${fnLine}/${dblLine}`,
+    );
+
+    const pickResolved = await Promise.all(paramOnPick.map(resolveHint));
+    const pickLabels = pickResolved.map((h) => h.label).join(',');
+    const closureResolved = await Promise.all(closureHints.map(resolveHint));
+    const fnLabel = closureResolved.find((h) => h.position.line === fnLine)?.label ?? '';
+    const dblLabel = closureResolved.find((h) => h.position.line === dblLine)?.label ?? '';
+    const closureOk = pickLabels === 'name:,weight:' && fnLabel.includes('Closure(string s, t)') && dblLabel.includes('Closure(x)');
+    record(
+      'inlayHint/resolve → 形参名 name:/weight: + 闭包签名 : Closure(string s, t) + 箭头函数 : Closure(x)',
+      closureOk,
+      closureOk ? `pick labels="${pickLabels}"；$fn="${fnLabel}"；$dbl="${dblLabel}"` : `pick="${pickLabels}" fn="${fnLabel}" dbl="${dblLabel}"`,
+    );
+
+    const mainHints = await hintsOf('MixMain.php');
+    const mainLines = mainDocText.split('\n');
+    const flagLine = mainLines.findIndex((l) => l.includes('public function flag('));
+    const fireLine = mainLines.findIndex((l) => l.includes('public function fire('));
+    const pickDeclLine = mainLines.findIndex((l) => l.includes('public function pick('));
+    const returnHints = mainHints.filter((h) => h.data?.kind === 'return');
+    const flagLabel = (await resolveHint(returnHints.find((h) => h.position.line === flagLine)))?.label ?? '';
+    const fireLabel = (await resolveHint(returnHints.find((h) => h.position.line === fireLine)))?.label ?? '';
+    const pickReturnHint = returnHints.find((h) => h.position.line === pickDeclLine);
+    const pickLabel = pickReturnHint ? (await resolveHint(pickReturnHint))?.label ?? '' : '(无骨架)';
+    const hintLimit = (await hintsOf('Sub.php')).length <= 500;
+    record(
+      'inlayHint/resolve(返回类型) → flag : bool / fire : void；pick 表达式串联推不出诚实省略；单文档 ≤500 上限',
+      flagLabel === ': bool' && fireLabel === ': void' && (pickLabel === '' || pickLabel === '(无骨架)') && hintLimit,
+      `flag="${flagLabel}" fire="${fireLabel}" pick="${pickLabel === '' ? '(空，隐藏)' : pickLabel}"；hints 数=${(await hintsOf('Sub.php')).length}≤500=${hintLimit}`,
+    );
+
     // fixture 清理（探针不留痕）
     try {
       fs.rmSync(REN_DIR, { recursive: true, force: true });

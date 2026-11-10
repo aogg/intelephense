@@ -28,6 +28,8 @@ const OWN_HANDLED = new Set([
   'codeAction/resolve',
   'textDocument/codeLens',
   'codeLens/resolve',
+  'textDocument/inlayHint',
+  'inlayHint/resolve',
 ]);
 
 /** 双引擎合并处理（转发官方 + 引擎并行） */
@@ -196,6 +198,10 @@ export class Router {
         return this.engine.codeLenses(params.textDocument?.uri);
       case 'codeLens/resolve':
         return this.engine.codeLensResolve((params as any)?.codeLens ?? {});
+      case 'textDocument/inlayHint':
+        return this.engine.inlayHints(params.textDocument?.uri, params.range);
+      case 'inlayHint/resolve':
+        return this.engine.inlayHintResolve(params as any);
       default:
         return null;
     }

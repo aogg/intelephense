@@ -25,6 +25,7 @@ import { prepareTypeHierarchy, typeHierarchySupertypes, typeHierarchySubtypes, t
 import { prepareRename, rename, type PrepareRenameResult, type RenameWorkspaceEdit, type RenameParamsLike } from '../features/rename';
 import { codeActions, codeActionResolve, type CodeActionLike, type CodeActionParamsLike } from '../features/codeAction';
 import { computeCodeLenses, resolveCodeLens, type CodeLensLike } from '../features/codeLens';
+import { computeInlayHints, resolveInlayHint, type InlayHintLike } from '../features/inlayHint';
 import { computeFoldingRanges, type FoldingRange } from '../features/folding';
 import { computeSelectionRanges, type SelectionRange } from '../features/selectionRange';
 import { computeDocumentLinks, type DocumentLink } from '../features/documentLink';
@@ -235,6 +236,14 @@ export class Engine {
 
   async codeLensResolve(lens: CodeLensLike): Promise<CodeLensLike> {
     return resolveCodeLens(this, lens);
+  }
+
+  async inlayHints(uri: string, range?: { start: { line: number; character: number }; end: { line: number; character: number } }): Promise<InlayHintLike[]> {
+    return computeInlayHints(this, uri, range);
+  }
+
+  async inlayHintResolve(hint: InlayHintLike): Promise<InlayHintLike> {
+    return resolveInlayHint(this, hint);
   }
 
 
