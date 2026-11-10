@@ -24,6 +24,8 @@ const OWN_HANDLED = new Set([
   'typeHierarchy/subtypes',
   'textDocument/rename',
   'textDocument/prepareRename',
+  'textDocument/codeAction',
+  'codeAction/resolve',
 ]);
 
 /** 双引擎合并处理（转发官方 + 引擎并行） */
@@ -184,6 +186,10 @@ export class Router {
         return this.engine.prepareRename(params);
       case 'textDocument/rename':
         return this.engine.rename(params);
+      case 'textDocument/codeAction':
+        return this.engine.codeActions(params);
+      case 'codeAction/resolve':
+        return this.engine.codeActionResolve(params as any);
       default:
         return null;
     }

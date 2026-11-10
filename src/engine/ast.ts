@@ -96,12 +96,13 @@ export function docblockOf(node: any): string | undefined {
   return undefined;
 }
 
-/** 类型节点的原始文本（name/identifier/nullabletype/uniontype/intersectiontype） */
+/** 类型节点的原始文本（name/identifier/typereference/nullabletype/uniontype/intersectiontype；3.7 实测参数类型为 typereference） */
 export function rawTypeOf(node: any): string | undefined {
   if (!node) return undefined;
   switch (node.kind) {
     case 'name':
-    case 'identifier': {
+    case 'identifier':
+    case 'typereference': {
       const name = typeof node.name === 'string' ? node.name : node.name && node.name.name;
       const resolution = node.resolution;
       // fqn（\ 开头或 resolution==='fqn'）保留前导 \，其余保持原样交给别名表

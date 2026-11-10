@@ -321,6 +321,13 @@ function walkAll(doc: ParsedDoc, visit: (node: any) => void): void {
   }
 }
 
+/** php-parser 3.x 把 ?Type 编码为「类型节点 + nullable 标志」；拼回 ? 前缀 */
+function withNullable(nullable: boolean | undefined, raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  if (nullable && !raw.startsWith('?') && !raw.includes('|')) return '?' + raw;
+  return raw;
+}
+
 function selectRangeOf(node: any, uri: string): SymLoc['selectionRange'] {
   void uri;
   const nameLoc = node.name && node.name.loc ? node.name.loc : node.loc;
@@ -383,7 +390,7 @@ function collectMember(uri: string, member: any, sym: ClassSym, doc: ParsedDoc):
     for (const prop of member.properties ?? []) {
       const name = plainName(prop.name);
       if (!name) continue;
-      const typeRaw = rawTypeOf(prop.type);
+      const typeRaw = withNullable(prop.nullable === true, rawTypeOf(prop.type));
       sym.properties.push({
         name,
         uri,
@@ -407,7 +414,7 @@ function collectMember(uri: string, member: any, sym: ClassSym, doc: ParsedDoc):
       pname = pname.replace(/^\$/, '');
       params.push({
         name: pname,
-        typeRaw: rawTypeOf(arg?.type) ?? undefined,
+        typeRaw: withNullable(arg?.nullable === true, rawTypeOf(arg?.type)),
         defaultRaw: arg?.value?.loc ? doc.text.slice(arg.value.loc.start.offset, arg.value.loc.end.offset) : undefined,
       });
     }
@@ -421,7 +428,7 @@ function collectMember(uri: string, member: any, sym: ClassSym, doc: ParsedDoc):
       isStatic: !!member.isStatic,
       isAbstract: !!member.isAbstract,
       params,
-      returnTypeRaw: rawTypeOf(member.type) ?? undefined,
+      returnTypeRaw: withNullable(member.nullable, rawTypeOf(member.type)),
       docblock,
       astNode: member,
       returnsNewSelf,

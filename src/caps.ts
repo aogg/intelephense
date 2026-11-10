@@ -33,7 +33,7 @@ export const OWN_FEATURES: OwnFeatureSet = {
   implementation: true,
   typeHierarchy: true,
   rename: true,
-  codeAction: false,
+  codeAction: true,
 };
 
 /** 兼容别名：T2 时期的导出名 */
@@ -59,6 +59,7 @@ export function mergeCapabilities(officialCaps: Record<string, unknown>, own: Ow
   override('declarationProvider', true, own.declaration);
   override('typeHierarchyProvider', true, own.typeHierarchy);
   override('renameProvider', { prepareProvider: true }, own.rename);
+  override('codeActionProvider', { codeActionKinds: ['quickfix', 'source'], resolveProvider: true }, own.codeAction);
 
   return caps;
 }

@@ -23,6 +23,7 @@ import { navigationImplementation } from '../features/implementation';
 import { navigationDeclaration } from '../features/declaration';
 import { prepareTypeHierarchy, typeHierarchySupertypes, typeHierarchySubtypes, type TypeHierarchyItem } from '../features/typeHierarchy';
 import { prepareRename, rename, type PrepareRenameResult, type RenameWorkspaceEdit, type RenameParamsLike } from '../features/rename';
+import { codeActions, codeActionResolve, type CodeActionLike, type CodeActionParamsLike } from '../features/codeAction';
 import { computeFoldingRanges, type FoldingRange } from '../features/folding';
 import { computeSelectionRanges, type SelectionRange } from '../features/selectionRange';
 import { computeDocumentLinks, type DocumentLink } from '../features/documentLink';
@@ -215,6 +216,14 @@ export class Engine {
 
   rename(params: RenameParamsLike): Promise<RenameWorkspaceEdit | null> {
     return rename(this, params);
+  }
+
+  async codeActions(params: CodeActionParamsLike): Promise<CodeActionLike[]> {
+    return codeActions(this, params);
+  }
+
+  async codeActionResolve(action: CodeActionLike): Promise<CodeActionLike> {
+    return codeActionResolve(this, action);
   }
 
   foldingRanges(uri: string): FoldingRange[] {
