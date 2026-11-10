@@ -1,0 +1,52 @@
+/**
+ * Caps：initialize 响应的 serverCapabilities 合并（architecture.md §二）。
+ * 规则：
+ *  - 官方 true 且无自研对应 → 透传；
+ *  - 官方 false/缺席 且自研已实现 → 覆盖为自研 provider；
+ *  - 官方 false/缺席 且自研未实现 → 保持 false/缺席（诚实降级）；
+ *  - positionEncoding 等协商字段不改写。
+ * T2 自研已实现：foldingRange / selectionRange / documentLink（provider 声明）；
+ * definition/hover/completion 走拦截合并，官方本就注册 true，无需改声明。
+ * rename/typeDefinition/declaration/implementation/typeHierarchy/codeAction/codeLens/inlayHint
+ * 本阶段未实现 → 维持官方免费值（false/缺席），不虚假声明。
+ */
+
+export interface OwnFeatureSet {
+  foldingRange: boolean;
+  selectionRange: boolean;
+  documentLink: boolean;
+}
+
+export const T2_OWN_FEATURES: OwnFeatureSet = {
+  foldingRange: true,
+  selectionRange: true,
+  documentLink: true,
+};
+
+export function mergeCapabilities(officialCaps: Record<string, unknown>, own: OwnFeatureSet): Record<string, unknown> {
+  const caps: Record<string, unknown> = { ...officialCaps };
+
+  // 官方为 false 或缺席时才允许自研覆盖；官方 true（用户持 key 开了 premium）时按
+  // architecture.md 默认「自研优先」原则仍由自研声明，行为与有无 key 一致。
+  const override = (key: string, provider: unknown, implemented: boolean): void => {
+    if (!implemented) return; // 诚实降级：保持官方值
+    const officialValue = officialCaps[key];
+    const officialActive = officialValue === true || (typeof officialValue === 'object' && officialValue !== null);
+    if (!officialActive || typeof officialValue === 'boolean') caps[key] = provider;
+  };
+
+  override('foldingRangeProvider', {}, own.foldingRange);
+  override('selectionRangeProvider', {}, own.selectionRange);
+  override('documentLinkProvider', { resolveProvider: false }, own.documentLink);
+
+  return caps;
+}
+
+/** initialize 响应整体合并：capabilities + serverInfo 补充 */
+export function mergeInitializeResponse(result: Record<string, unknown>, own: OwnFeatureSet, version: string): Record<string, unknown> {
+  const officialCaps = (result.capabilities ?? {}) as Record<string, unknown>;
+  const merged: Record<string, unknown> = { ...result, capabilities: mergeCapabilities(officialCaps, own) };
+  const officialServerInfo = result.serverInfo as Record<string, unknown> | undefined;
+  merged.serverInfo = officialServerInfo ?? { name: 'intelephense-openidea', version };
+  return merged;
+}
