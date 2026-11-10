@@ -6,6 +6,10 @@
   - 官方注册为 `false`（无 key 即关闭）：`rename`、`typeDefinition`、`declaration`、`implementation`、`foldingRange`、`selectionRange`、`codeAction`、`typeHierarchy`
   - 官方根本不注册（快照中缺席）：`codeLens`、`inlayHint`、`documentLink`
 - 策略取值：**透传官方**（官方免费已有，中间件直通）/ **自研**（premium 等价功能，由自有 php-parser 语义引擎实现，绝不触碰官方 premium 代码路径）/ **自研增强**（官方已有能力，中间件拦截后合并/补充自有结果）
+- **状态总览（T4 后实况）**：清单 §1–§13 全部自研已实现（§1–§6 T3、§7/§8/§12/§13 T4、§9–§11 T2）；
+  合并后 serverCapabilities 自研声明 renameProvider/typeDefinitionProvider/implementationProvider/declarationProvider/
+  typeHierarchyProvider/codeActionProvider/codeLensProvider/inlayHintProvider/foldingRangeProvider/selectionRangeProvider/
+  documentLinkProvider，serverInfo=intelephense-openidea 0.3.0；45 项协议探针全 PASS（npm run probe）。
 
 合规前提见 license-review.md：不逆向、不绕过 license、不改官方文件、不过滤官方通知。所有「自研」项均为独立实现。
 
@@ -18,6 +22,7 @@
 | LSP 方法 | `textDocument/rename`、`textDocument/prepareRename` |
 | 免费版 | ❌（`renameProvider: false`） |
 | 策略 | **自研** |
+| 状态 | ✅ 自研已实现（T3；T4 增补 @mixin 引用通道与嵌入语境覆盖，探针实证） |
 
 - 范围：变量/参数/函数/常量/类/接口/trait/枚举/属性/方法/类常量（`textDocument/prepareRename` 先校验可改名与范围）。
 - 跨文件：基于自研全局符号表（URI + 索引），收集全部引用处生成 `WorkspaceEdit`（`changes`/`documentChanges` 多文件文本编辑）。
@@ -31,6 +36,7 @@
 | LSP 方法 | `textDocument/implementation` |
 | 免费版 | ❌（`implementationProvider: false`） |
 | 策略 | **自研** |
+| 状态 | ✅ 自研已实现（T3） |
 
 - 接口方法/抽象方法 → 全部实现处（类方法声明位置）；接口/抽象类 → 全部子类/实现类；trait → `use` 该 trait 的类。
 - 依赖：继承链索引 + trait 展开索引（architecture.md §语义引擎）。
@@ -42,6 +48,7 @@
 | LSP 方法 | `textDocument/typeDefinition` |
 | 免费版 | ❌（`typeDefinitionProvider: false`） |
 | 策略 | **自研** |
+| 状态 | ✅ 自研已实现（T3） |
 
 - 对「符号引用」解析出其**静态类型**，再跳到类型声明处：`$this->auth` → `Auth` 类所在文件。
 - 类型来源优先级：docblock `@var` / 属性声明类型 / 赋值推断（`new X`、`X::instance()` 返回类型）→ 推不出则返回空（不误跳）。
@@ -53,6 +60,7 @@
 | LSP 方法 | `textDocument/declaration` |
 | 免费版 | ❌（`declarationProvider: false`） |
 | 策略 | **自研** |
+| 状态 | ✅ 自研已实现（T3） |
 
 - 语义：跳到「声明处」而非「定义处」。PHP 中典型场景：接口/抽象方法声明的跳转目标 → `interface` 中的方法签名；属性引用 → 属性声明行。
 - 与免费 `definition` 的分工：`definition` 落到最终实现；`declaration` 落到（最先）声明。目标类型同时是接口与实现时，两者结果不同。
@@ -64,6 +72,7 @@
 | LSP 方法 | `textDocument/prepareTypeHierarchy`、`typeHierarchy/supertypes`、`typeHierarchy/subtypes` |
 | 免费版 | ❌（`typeHierarchyProvider: false`） |
 | 策略 | **自研** |
+| 状态 | ✅ 自研已实现（T3） |
 
 - prepare 返回光标处类型的 `TypeHierarchyItem`（name/kind/uri/range/selectionRange）。
 - supertypes：extends/implements 递归向上（含 trait use）；subtypes：全局反向索引向下。
@@ -76,6 +85,7 @@
 | LSP 方法 | `textDocument/codeAction`、`codeAction/resolve` |
 | 免费版 | ❌（`codeActionProvider: false`） |
 | 策略 | **自研** |
+| 状态 | ✅ 自研已实现（T3） |
 
 - **自动 import**：诊断「未定义类型」→ 在 use 区插入 `use FQN;`（尊重别名冲突，自动加 `as`）；支持 `CodeActionKind.QuickFix` + `Source`。
 - **批量实现抽象方法**：类声明处 implements/extends 抽象方法未实现 → 一次生成全部方法骨架（含参数默认值、返回类型、`@return`/`@throws` docblock），插入类体并按父类顺序排列。
@@ -92,6 +102,7 @@
 | LSP 方法 | `textDocument/codeLens`、`codeLens/resolve` |
 | 免费版 | ❌（快照中不注册） |
 | 策略 | **自研** |
+| 状态 | ✅ 自研已实现（T4：resolve 惰性；类/方法/traituse/docproperty 五通道计数，零计数隐藏） |
 
 - 类/接口/trait 声明行：引用数（全文引用该符号的文件数/次数）、实现数（implementations）。
 - trait 声明行：`use` 该 trait 的类数量。
@@ -105,6 +116,7 @@
 | LSP 方法 | `textDocument/inlayHint`、`inlayHint/resolve` |
 | 免费版 | ❌（快照中不注册） |
 | 策略 | **自研** |
+| 状态 | ✅ 自研已实现（T4：resolve 惰性；形参名/返回类型/闭包签名三类，单文档 500 上限） |
 
 - 参数名 hint：字面量/简单实参前缀 `paramName:`（跳过与形参同名的命名参数）。
 - 返回类型 hint：无返回类型声明的方法/闭包声明后缀 `: Type`（由 return 语句推断）。
@@ -118,6 +130,7 @@
 | LSP 方法 | `textDocument/foldingRange` |
 | 免费版 | ❌（`foldingRangeProvider: false`） |
 | 策略 | **自研** |
+| 状态 | ✅ 自研已实现（T2） |
 
 - 折叠区域：函数/方法体、`use` 导入块、heredoc/nowdoc（`<<<SQL ... SQL;`）、连续注释块（docblock 与行注释段）、`namespace` 块、`switch/case`、`match`。
 - 注意：openidea 客户端自身往往也有缩进折叠兜底；本 provider 提供语法级（非缩进级）区域。
@@ -129,6 +142,7 @@
 | LSP 方法 | `textDocument/selectionRange` |
 | 免费版 | ❌（`selectionRangeProvider: false`） |
 | 策略 | **自研** |
+| 状态 | ✅ 自研已实现（T2） |
 
 - 由 php-parser AST 节点链（变量 → 表达式 → 语句 → 方法 → 类 → namespace → 文件）生成 `SelectionRange[]`，客户端 Alt+Shift+→/← 沿链扩缩。
 - 要求返回与请求 `positions[]` 一一对应的数组；含 heredoc 内部位置的语法回退。
@@ -140,6 +154,7 @@
 | LSP 方法 | `textDocument/documentLink`、`documentLink/resolve` |
 | 免费版 | ❌（快照中不注册） |
 | 策略 | **自研** |
+| 状态 | ✅ 自研已实现（T2） |
 
 - `require`/`require_once`/`include`/`include_once` 的字符串参数 → 解析相对路径/CWD 相对路径，生成 `DocumentLink`（`target` 为 `file://` URI）。
 - resolve 懒解析：确保目标文件存在后再填 `target`，不存在则不给 target（避免编辑器打开无效链接）。
@@ -151,6 +166,7 @@
 | LSP 方法 | 横切能力（影响 `completion`、`hover`、`definition`、`references` 等的响应内容，不是独立方法） |
 | 免费版 | ❌ |
 | 策略 | **自研** |
+| 状态 | ✅ 自研已实现（T4：成员真正并入有效成员表，completion/definition/hover/rename/codeLens 全通道生效） |
 
 - 类 docblock 中 `@mixin TraitOrClass` / `@mixin \NS\Name AliasName` → 把目标符号的方法/属性按别名合并进该类的虚拟符号表。
 - 影响面：`$obj->` 补全列表、成员 hover、成员 definition、code lens 计数；`@mixin` 目标自身的 docblock（含 `@method`）递归生效。
@@ -183,6 +199,7 @@
 | 格式化 | `textDocument/formatting`、`textDocument/rangeFormatting` | 透传 |
 | 高亮 | `textDocument/documentHighlight` | 透传 |
 | 增量同步 | `textDocumentSync: 2`、`didOpen/didChange/didClose` | 透传 + 中间件维护文档镜像（自研引擎增量重析） |
+| 状态 | ✅ 自研已实现（T4 务实子集：encapsed/heredoc 插值与 <?= ?> 内联块实证全覆盖；纯 HTML/JS 非 PHP 文本不承诺改名） |
 
 ## 三、透传与自研的边界（中间件拦截点）
 
