@@ -172,8 +172,8 @@ function docblocksOf(doc: ParsedDoc): { value: string; startOffset: number; endO
   return [...out.values()];
 }
 
-/** 候选文件迭代：内存镜像文本优先，磁盘文本预筛（needle 不出现则不解析） */
-async function forEachCandidateDoc(engine: import('./navigation').NavigationEngine, needle: string, fn: (doc: ParsedDoc) => Promise<void> | void): Promise<void> {
+/** 候选文件迭代：内存镜像文本优先，磁盘文本预筛（needle 不出现则不解析）。codeLens 计数复用 */
+export async function forEachCandidateDoc(engine: import('./navigation').NavigationEngine, needle: string, fn: (doc: ParsedDoc) => Promise<void> | void): Promise<void> {
   if (!needle) return;
   await engine.index.ensureScan();
   for (const uri of engine.allKnownUris()) {
@@ -553,7 +553,8 @@ function collectDocblockWordEdits(doc: ParsedDoc, file: FileIndex | undefined, f
 
 /** ---------- 方法 ---------- */
 
-interface MemberFamily {
+/** 继承族（T4 codeLens / mixin 通道复用）：上行（extends/implements/trait use）+ 下行（全工作区）同名声明者 */
+export interface MemberFamily {
   lower: Set<string>;
   classes: ClassSym[];
   traits: string[]; // 小写 fqn
@@ -567,7 +568,8 @@ function declaresProperty(cls: ClassSym, name: string): boolean {
 }
 
 /** 继承族：上行（extends/implements/trait use）+ 下行（全工作区）同名声明者 */
-async function memberFamily(engine: import('./navigation').NavigationEngine, owner: ClassSym, name: string, kind: 'method' | 'property'): Promise<MemberFamily> {
+/** 继承族：上行（extends/implements/trait use）+ 下行（全工作区）同名声明者。codeLens 计数复用 */
+export async function memberFamily(engine: import('./navigation').NavigationEngine, owner: ClassSym, name: string, kind: 'method' | 'property'): Promise<MemberFamily> {
   const declares = kind === 'method' ? declaresMethod : declaresProperty;
   const family: MemberFamily = { lower: new Set<string>(), classes: [], traits: [] };
   const add = (cls: ClassSym): void => {
@@ -652,6 +654,95 @@ async function renameMethod(engine: import('./navigation').NavigationEngine, own
   await collectMemberCallSiteEdits(engine, oldName, newName, family, edits);
 }
 
+/** 可解析成员访问点（rename 编辑与 T4 codeLens 引用计数共用） */
+export interface MemberSite {
+  uri: string;
+  doc: ParsedDoc;
+  range: LspRange;
+  staticProp: boolean; // ::$name 形式（替换文本需 $ 前缀）
+}
+
+export type MemberSiteMode = 'method' | 'property';
+
+/**
+ * 全工作区收集某成员的「可解析访问点」：->m( / ::m(（mode=method）或 ->x / ::$x（mode=property）。
+ * 与 rename 编辑器逻辑同源：接收者类型解析 + 继承族/mixin 通道相关性判定；宁可漏收不可误收。
+ */
+export async function collectMemberAccessSites(
+  engine: import('./navigation').NavigationEngine,
+  name: string,
+  family: MemberFamily,
+  mode: MemberSiteMode,
+): Promise<MemberSite[]> {
+  const sites: MemberSite[] = [];
+  await forEachCandidateDoc(engine, name, async (doc) => {
+    const view: ParsedDocLike = { uri: doc.uri, ast: doc.ast, classNodes: (doc as any).classNodes ?? [] };
+    const file = engine.index.files.get(doc.uri);
+    // walker 回调内不能 await：先同步收集，walker 结束后统一异步处理（逐文件独立队列，避免并发串扰）
+    const pendingReceivers: { doc: ParsedDoc; node: any; nameNode: any; ownerClass: ClassSym | undefined }[] = [];
+    const pendingStaticChecks: { doc: ParsedDoc; nameNode: any; fqns: string[]; staticProp: boolean }[] = [];
+    walkNoUse(doc.ast, (node) => {
+      if (node.kind !== 'methodlookup' && node.kind !== 'staticlookup' && node.kind !== 'propertylookup') return;
+      if (node.kind === 'methodlookup' && mode !== 'method') return;
+      if (!node.offset?.loc) return;
+      const offset = node.offset;
+      const nameNode = offset.kind === 'call' ? offset.what : offset;
+      if (!nameNode?.loc) return;
+      // 成员名 token：无 $ 前缀且精确等于旧名（静态属性 offset 是带 $ 的 variable，天然区分）
+      const span = doc.text.slice(byteIndexOf(doc, nameNode.loc.start.offset), byteIndexOf(doc, nameNode.loc.end.offset));
+      // php-parser 3.7：call 包在 lookup 外层（->m() 的 offset 是 identifier），用 offset 后是否紧跟 ( 判定方法调用
+      const afterName = doc.text.slice(byteIndexOf(doc, nameNode.loc.end.offset), byteIndexOf(doc, nameNode.loc.end.offset) + 8);
+      const methodCall =
+        span === name &&
+        (node.kind === 'methodlookup' ||
+          (node.kind === 'propertylookup' && /^\s*\(/.test(afterName)) ||
+          (node.kind === 'staticlookup' && offset.kind !== 'variable')); // Fqn::m( / self:: / parent::
+      // propertylookup 且 offset 非 call、后不紧跟 ( → 属性访问；->m() 是方法调用（methodCall 分支处理）
+      const propAccess =
+        (node.kind === 'propertylookup' && offset.kind !== 'call' && span === name && !/^\s*\(/.test(afterName)) ||
+        (node.kind === 'staticlookup' && offset.kind === 'variable' && span === '$' + name);
+      const hit = mode === 'method' ? methodCall : propAccess;
+      if (!hit) return;
+      const pos = locRangeOfSpan(doc, node.loc).start;
+      const ownerClass = enclosingClass(view, pos.line, pos.character);
+
+      if (node.kind !== 'staticlookup') {
+        // 异步解析在 walker 内不可等待：先收集，walker 外处理
+        pendingReceivers.push({ doc, node, nameNode, ownerClass });
+        return;
+      }
+      const what = node.what;
+      const whatKind = what?.kind;
+      let fqns: string[] = [];
+      if (whatKind === 'selfreference' || whatKind === 'staticreference') {
+        if (ownerClass) fqns = [ownerClass.fqn];
+      } else if (whatKind === 'parentreference') {
+        if (ownerClass) {
+          const ocFile = engine.index.files.get(ownerClass.uri);
+          fqns = (ownerClass.extendsRaw ?? []).map((raw) => resolveTypeRaw(raw, ocFile, ownerClass.fqn)[0]).filter((x): x is string => !!x);
+        }
+      } else {
+        const raw = rawTypeOf(what);
+        if (raw) fqns = resolveTypeRaw(raw, file, ownerClass?.fqn);
+      }
+      if (fqns.length > 0) pendingStaticChecks.push({ doc, nameNode, fqns, staticProp: offset.kind === 'variable' });
+    });
+    // walker 结束后统一异步处理（walk 回调不能 await）
+    for (const item of pendingReceivers.splice(0)) {
+      const fqns = await receiverFqnsWithParams(engine, item.doc, item.node, view, item.ownerClass);
+      if (await receiverRelated(engine, fqns, family)) {
+        sites.push({ uri: item.doc.uri, doc: item.doc, range: locRangeOfSpan(item.doc, item.nameNode.loc), staticProp: false });
+      }
+    }
+    for (const item of pendingStaticChecks.splice(0)) {
+      if (await receiverRelated(engine, item.fqns, family)) {
+        sites.push({ uri: item.doc.uri, doc: item.doc, range: locRangeOfSpan(item.doc, item.nameNode.loc), staticProp: item.staticProp });
+      }
+    }
+  });
+  return sites;
+}
+
 async function collectMemberCallSiteEdits(
   engine: import('./navigation').NavigationEngine,
   oldName: string,
@@ -659,70 +750,13 @@ async function collectMemberCallSiteEdits(
   family: MemberFamily,
   edits: FileEdits,
 ): Promise<void> {
-  await forEachCandidateDoc(engine, oldName, async (doc) => {
-    const view: ParsedDocLike = { uri: doc.uri, ast: doc.ast, classNodes: (doc as any).classNodes ?? [] };
-    const file = engine.index.files.get(doc.uri);
-    // walker 回调内不能 await：先同步收集，walker 结束后统一异步处理（逐文件独立队列，避免并发串扰）
-    const pendingReceivers: { node: any; nameNode: any; ownerClass: ClassSym | undefined }[] = [];
-    const pendingStaticChecks: { nameNode: any; fqns: string[] }[] = [];
-    walkNoUse(doc.ast, (node) => {
-      if (node.kind !== 'methodlookup' && node.kind !== 'staticlookup' && node.kind !== 'propertylookup') return;
-      if (!node.offset?.loc) return;
-      const offset = node.offset;
-      const nameNode = offset.kind === 'call' ? offset.what : offset;
-      if (!nameNode?.loc) return;
-      // 方法名 token：无 $ 前缀且精确等于旧名（静态属性 offset 是带 $ 的 variable，天然区分）
-      const span = doc.text.slice(byteIndexOf(doc, nameNode.loc.start.offset), byteIndexOf(doc, nameNode.loc.end.offset));
-      if (span !== oldName) return;
-      // php-parser 3.7：call 包在 lookup 外层（->m() 的 offset 是 identifier），用 offset 后是否紧跟 ( 判定方法调用
-      const afterName = doc.text.slice(byteIndexOf(doc, nameNode.loc.end.offset), byteIndexOf(doc, nameNode.loc.end.offset) + 8);
-      const isMethodCall =
-        node.kind === 'methodlookup' ||
-        (node.kind === 'propertylookup' && /^\s*\(/.test(afterName)) ||
-        (node.kind === 'staticlookup' && offset.kind !== 'variable'); // Fqn::m( / self:: / parent::
-      if (!isMethodCall) return;
-      const pos = locRangeOfSpan(doc, node.loc).start;
-      const ownerClass = enclosingClass(view, pos.line, pos.character);
-
-      let receiverFqns: string[] = [];
-      if (node.kind !== 'staticlookup') {
-        // 异步解析在 walker 内不可等待：先收集，walker 外处理
-        pendingReceivers.push({ node, nameNode, ownerClass });
-      } else {
-        const what = node.what;
-        const whatKind = what?.kind;
-        let fqns: string[] = [];
-        if (whatKind === 'selfreference' || whatKind === 'staticreference') {
-          if (ownerClass) fqns = [ownerClass.fqn];
-        } else if (whatKind === 'parentreference') {
-          if (ownerClass) {
-            const ocFile = engine.index.files.get(ownerClass.uri);
-            fqns = (ownerClass.extendsRaw ?? []).map((raw) => resolveTypeRaw(raw, ocFile, ownerClass.fqn)[0]).filter((x): x is string => !!x);
-          }
-        } else {
-          const raw = rawTypeOf(what);
-          if (raw) fqns = resolveTypeRaw(raw, file, ownerClass?.fqn);
-        }
-        if (fqns.length > 0) pendingStaticChecks.push({ nameNode, fqns });
-      }
-    });
-    // walker 结束后统一异步处理（walk 回调不能 await）
-    for (const item of pendingReceivers.splice(0)) {
-      const fqns = await receiverFqnsWithParams(engine, doc, item.node, view, item.ownerClass);
-      if (await receiverRelated(engine, fqns, family)) {
-        edits.addRange(doc, locRangeOfSpan(doc, item.nameNode.loc), newName);
-      }
-    }
-    for (const item of pendingStaticChecks.splice(0)) {
-      if (await receiverRelated(engine, item.fqns, family)) {
-        edits.addRange(doc, locRangeOfSpan(doc, item.nameNode.loc), newName);
-      }
-    }
-  });
+  for (const site of await collectMemberAccessSites(engine, oldName, family, 'method')) {
+    edits.addRange(site.doc, site.range, newName);
+  }
 }
 
-/** 接收者解析：常规推断优先，未命中时用「函数参数类型标注」兜底（function go(Base $b) 的 \$b） */
-async function receiverFqnsWithParams(
+/** 接收者解析：常规推断优先，未命中时用「函数参数类型标注」兜底（function go(Base $b) 的 \$b）。codeLens 计数复用 */
+export async function receiverFqnsWithParams(
   engine: import('./navigation').NavigationEngine,
   doc: ParsedDoc,
   lookupNode: any,
@@ -796,51 +830,9 @@ async function collectPropertyAccessEdits(
   family: MemberFamily,
   edits: FileEdits,
 ): Promise<void> {
-  await forEachCandidateDoc(engine, oldName, async (doc) => {
-    const view: ParsedDocLike = { uri: doc.uri, ast: doc.ast, classNodes: (doc as any).classNodes ?? [] };
-    const file = engine.index.files.get(doc.uri);
-    const receivers: { doc: ParsedDoc; node: any; nameNode: any; ownerClass: ClassSym | undefined; prefix: string }[] = [];
-    const staticChecks: { doc: ParsedDoc; nameNode: any; fqns: string[]; prefix: string }[] = [];
-    walkNoUse(doc.ast, (node) => {
-      if (node.kind !== 'propertylookup' && node.kind !== 'staticlookup') return;
-      if (!node.offset?.loc) return;
-      const offset = node.offset;
-      const nameNode = offset.kind === 'call' ? offset.what : offset;
-      if (!nameNode?.loc) return;
-      const span = doc.text.slice(byteIndexOf(doc, nameNode.loc.start.offset), byteIndexOf(doc, nameNode.loc.end.offset));
-      // propertylookup 且 offset 非 call、后不紧跟 ( → 属性访问；->m() 是方法调用（方法收集器处理）
-      const afterName = doc.text.slice(byteIndexOf(doc, nameNode.loc.end.offset), byteIndexOf(doc, nameNode.loc.end.offset) + 8);
-      const isInstance = node.kind === 'propertylookup' && offset.kind !== 'call' && span === oldName && !/^\s*\(/.test(afterName);
-      const isStatic = node.kind === 'staticlookup' && offset.kind === 'variable' && span === '$' + oldName;
-      if (!isInstance && !isStatic) return;
-      const pos = locRangeOfSpan(doc, node.loc).start;
-      const ownerClass = enclosingClass(view, pos.line, pos.character);
-      if (isInstance) {
-        receivers.push({ doc, node, nameNode, ownerClass, prefix: '' });
-      } else {
-        const what = node.what;
-        let fqns: string[] = [];
-        if (what?.kind === 'selfreference' || what?.kind === 'staticreference') {
-          if (ownerClass) fqns = [ownerClass.fqn];
-        } else {
-          const raw = rawTypeOf(what);
-          if (raw) fqns = resolveTypeRaw(raw, file, ownerClass?.fqn);
-        }
-        if (fqns.length > 0) staticChecks.push({ doc, nameNode, fqns, prefix: '$' });
-      }
-    });
-    for (const item of receivers.splice(0)) {
-      const fqns = await receiverFqnsWithParams(engine, doc, item.node, view, item.ownerClass);
-      if (await receiverRelated(engine, fqns, family)) {
-        edits.addRange(doc, locRangeOfSpan(doc, item.nameNode.loc), newName);
-      }
-    }
-    for (const item of staticChecks.splice(0)) {
-      if (await receiverRelated(engine, item.fqns, family)) {
-        edits.addRange(item.doc, locRangeOfSpan(item.doc, item.nameNode.loc), item.prefix + newName);
-      }
-    }
-  });
+  for (const site of await collectMemberAccessSites(engine, oldName, family, 'property')) {
+    edits.addRange(site.doc, site.range, (site.staticProp ? '$' : '') + newName);
+  }
 }
 
 /** docblock（类级 @property / 属性级 @var）中 $name 的标签行编辑 */

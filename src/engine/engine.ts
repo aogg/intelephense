@@ -24,6 +24,7 @@ import { navigationDeclaration } from '../features/declaration';
 import { prepareTypeHierarchy, typeHierarchySupertypes, typeHierarchySubtypes, type TypeHierarchyItem } from '../features/typeHierarchy';
 import { prepareRename, rename, type PrepareRenameResult, type RenameWorkspaceEdit, type RenameParamsLike } from '../features/rename';
 import { codeActions, codeActionResolve, type CodeActionLike, type CodeActionParamsLike } from '../features/codeAction';
+import { computeCodeLenses, resolveCodeLens, type CodeLensLike } from '../features/codeLens';
 import { computeFoldingRanges, type FoldingRange } from '../features/folding';
 import { computeSelectionRanges, type SelectionRange } from '../features/selectionRange';
 import { computeDocumentLinks, type DocumentLink } from '../features/documentLink';
@@ -225,6 +226,17 @@ export class Engine {
   async codeActionResolve(action: CodeActionLike): Promise<CodeActionLike> {
     return codeActionResolve(this, action);
   }
+
+  // ---------- T4: codeLens / inlayHint ----------
+
+  async codeLenses(uri: string): Promise<CodeLensLike[]> {
+    return computeCodeLenses(this, uri);
+  }
+
+  async codeLensResolve(lens: CodeLensLike): Promise<CodeLensLike> {
+    return resolveCodeLens(this, lens);
+  }
+
 
   foldingRanges(uri: string): FoldingRange[] {
     const doc = this.docs.get(uri);

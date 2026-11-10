@@ -866,6 +866,199 @@ class Report
     }
     record('codeAction/resolve(生成 PHPDoc) → 多 return 联合类型', renderOk, renderEvidence);
 
+    // ---------- 11) T4 codeLens：计数 + resolve 惰性（合成 fixture，didOpen 不落盘） ----------
+    const T4_DIR = path.join(ZUODIAN_ROOT, 'application', 'probe', 't4');
+    const t4 = (f: string): string => 'file://' + path.join(T4_DIR, f);
+    const t4Texts: Record<string, string> = {
+      'MixTarget.php': `<?php
+namespace app\\probe\\t4;
+
+class MixTarget
+{
+    /** @var string */
+    public $mixProp;
+
+    public function mixMethod(int $a, string $b = 'x'): string
+    {
+        return $b . $a;
+    }
+}
+`,
+      'traits.php': `<?php
+namespace app\\probe\\t4;
+
+trait HasLogger
+{
+    public function log(string $msg): void
+    {
+    }
+}
+`,
+      'Base.php': `<?php
+namespace app\\probe\\t4;
+
+class Base
+{
+    public function handle(): void
+    {
+    }
+}
+`,
+      'Virt.php': `<?php
+namespace app\\probe\\t4;
+
+class Virt
+{
+    public function ping(): string
+    {
+        return 'pong';
+    }
+}
+`,
+      'MixMain.php': `<?php
+namespace app\\probe\\t4;
+
+use app\\probe\\t4\\MixTarget;
+
+/**
+ * 探针主体
+ * @mixin MixTarget
+ * @property \\app\\probe\\t4\\Virt $virt 虚拟属性
+ */
+class MixMain extends Base
+{
+    use HasLogger;
+
+    /** @var MixTarget */
+    public $target;
+
+    /** @var string */
+    public $label = 'init';
+
+    public function mixCall(): string
+    {
+        $this->mixMethod(1, 'a');
+        return $this->virt->ping();
+    }
+
+    public function pick(string $name, $weight = 1)
+    {
+        $t = new MixTarget();
+        $t->mixMethod(2, 'b');
+        return $this->target->mixProp . $this->label . $name . $weight;
+    }
+
+    public function flag($v)
+    {
+        return true;
+    }
+
+    public function fire($x)
+    {
+        $this->label = $x;
+    }
+}
+`,
+      'Sub.php': `<?php
+namespace app\\probe\\t4;
+
+class Sub extends Base
+{
+    public function handle(): void
+    {
+        $m = new MixTarget();
+        echo "user {$m->mixProp}";
+    }
+
+    public function render(MixMain $main, int $copies): void
+    {
+        $main->mixMethod(3, 'c');
+        $main->pick('n', 2);
+        $main->pick(name: 'n', w: 2);
+        $fn = function (string $s, $t = 1) { return $s; };
+        $dbl = fn($x) => $x * 2;
+        ?>
+<div><?= $main->mixMethod(4, 'd') ?></div>
+        <?php
+    }
+}
+`,
+    };
+    for (const [f, text] of Object.entries(t4Texts)) {
+      client.notify('textDocument/didOpen', { textDocument: { uri: t4(f), languageId: 'php', version: 1, text } });
+    }
+    const lensOf = (f: string): Promise<any[]> =>
+      client.send('textDocument/codeLens', { textDocument: { uri: t4(f) } }).done.then((r: any) => (Array.isArray(r.result) ? r.result : []));
+    const resolveLens = async (lens: any): Promise<any> => (await client.send('codeLens/resolve', { codeLens: lens }).done).result;
+
+    // compute：骨架带 range+data（kind），无 command（resolve 惰性）
+    const mainLenses = await lensOf('MixMain.php');
+    const mainDocText = t4Texts['MixMain.php'];
+    const mainClassLine = mainDocText.split('\n').findIndex((l) => l.startsWith('class MixMain'));
+    const mainTraitLine = mainDocText.split('\n').findIndex((l) => l.includes('use HasLogger'));
+    const mainDocpropLine = mainDocText.split('\n').findIndex((l) => l.includes('@property'));
+    const skeletonOk =
+      mainLenses.length > 0 &&
+      mainLenses.every((l) => !l.command && l.data?.kind) &&
+      mainLenses.some((l) => l.data?.kind === 'class-subtypes' && l.range.start.line === mainClassLine) &&
+      mainLenses.some((l) => l.data?.kind === 'traituse' && l.range.start.line === mainTraitLine) &&
+      mainLenses.some((l) => l.data?.kind === 'docprop-refs' && l.range.start.line === mainDocpropLine);
+    record(
+      'codeLens(MixMain) → 骨架只带 range+kind（类/方法/属性/traituse/docprop），resolve 惰性',
+      skeletonOk,
+      skeletonOk
+        ? `lens 数=${mainLenses.length}，kinds=${[...new Set(mainLenses.map((l) => l.data.kind))].join('/')}，全部无 command`
+        : `lens=${summarize(mainLenses.map((l: any) => ({ k: l.data?.kind, line: l.range?.start?.line, cmd: l.command })))}`,
+    );
+
+    // resolve：Base 子类/实现/重写计数（Sub + MixMain）
+    const baseLenses = await lensOf('Base.php');
+    const baseResolved: any[] = [];
+    for (const l of baseLenses) baseResolved.push(await resolveLens(l));
+    const baseCmd = (kind: string): string | undefined => baseResolved.find((l) => l.data?.kind === kind)?.command?.title;
+    const baseOk = baseCmd('class-subtypes') === '2 个子类' && baseCmd('class-implementations') === '2 个实现';
+    const handleOverride = baseResolved.find((l) => l.data?.kind === 'method-overrides' && l.data?.member === 'handle')?.command?.title ?? '';
+    // 子类侧：Sub::handle 标注重写来源 Base::handle
+    const subLensesBase = await lensOf('Sub.php');
+    const subHandle = (await resolveLens(subLensesBase.find((l) => l.data?.kind === 'method-overrides' && l.data?.member === 'handle'))).command?.title ?? '';
+    record(
+      'codeLens/resolve(Base) → 子类 2 / 实现 2 / handle 被 1 个子类重写（子类侧标注 重写 Base::handle）',
+      baseOk && handleOverride.includes('被 1 个子类重写') && subHandle.includes('重写 Base::handle'),
+      baseOk && handleOverride
+        ? `subtypes="${baseCmd('class-subtypes')}" implementations="${baseCmd('class-implementations')}" overrides="${handleOverride}"；Sub::handle="${subHandle}"`
+        : `resolved=${summarize(baseResolved.filter((l) => l.command).map((l) => ({ k: l.data?.kind, m: l.data?.member, t: l.command?.title })))}`,
+    );
+
+    // resolve：traituse 行（MixMain use HasLogger）→ 使用该 trait 的类数（含宿主）=1
+    const traituseLens = mainLenses.find((l) => l.data?.kind === 'traituse');
+    const traituseResolved = traituseLens ? await resolveLens(traituseLens) : null;
+    record(
+      'codeLens/resolve(trait use 行) → HasLogger 被 1 个类使用',
+      traituseResolved?.command?.title === '1 个类使用',
+      `title=${summarize(traituseResolved?.command?.title)}`,
+    );
+
+    // resolve：属性与 docblock @property 虚拟属性引用计数
+    const targetRefs = (await resolveLens(mainLenses.find((l) => l.data?.kind === 'property-refs' && l.data?.member === 'target'))).command?.title;
+    const labelRefs = (await resolveLens(mainLenses.find((l) => l.data?.kind === 'property-refs' && l.data?.member === 'label'))).command?.title;
+    const virtRefs = (await resolveLens(mainLenses.find((l) => l.data?.kind === 'docprop-refs'))).command?.title;
+    const propOk = targetRefs === '1 处引用' && labelRefs === '2 处引用' && virtRefs === '1 处引用';
+    record(
+      'codeLens/resolve(属性) → $target 1 / $label 2 / docblock @property $virt 1（docblock 通道计数）',
+      propOk,
+      propOk ? `target="${targetRefs}" label="${labelRefs}" virt="${virtRefs}"` : `target=${summarize(targetRefs)} label=${summarize(labelRefs)} virt=${summarize(virtRefs)}`,
+    );
+
+    // resolve：零计数 → 无 command（客户端隐藏，零噪声）
+    const mainSubtypes = await resolveLens(mainLenses.find((l) => l.data?.kind === 'class-subtypes'));
+    const mixCallRefs = await resolveLens(mainLenses.find((l) => l.data?.kind === 'method-refs' && l.data?.member === 'mixCall'));
+    const zeroOk = !mainSubtypes.command && !mixCallRefs.command;
+    record(
+      'codeLens/resolve(零计数) → MixMain 无子类、mixCall 零引用：无 command（隐藏）',
+      zeroOk,
+      zeroOk ? 'class-subtypes/method-refs 均无 command' : `subtypes=${summarize(mainSubtypes.command)} mixCall=${summarize(mixCallRefs.command)}`,
+    );
+
     // fixture 清理（探针不留痕）
     try {
       fs.rmSync(REN_DIR, { recursive: true, force: true });

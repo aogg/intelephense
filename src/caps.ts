@@ -9,7 +9,7 @@
  * definition/hover/completion 走拦截合并，官方本就注册 true，无需改声明。
  * T3 起逐个落地：typeDefinition → implementation → declaration → typeHierarchy
  * → rename → codeAction（每项随功能 commit 翻牌为 true，未实现项维持 false，不虚假声明）。
- * codeLens/inlayHint 本阶段未实现 → 维持官方免费值（缺席），不虚假声明。
+ * T4 落地：codeLens（resolveProvider=true，官方免费快照缺席 → 由自研注册）；inlayHint 随后。
  */
 
 export interface OwnFeatureSet {
@@ -22,6 +22,7 @@ export interface OwnFeatureSet {
   typeHierarchy: boolean;
   rename: boolean;
   codeAction: boolean;
+  codeLens: boolean;
 }
 
 export const OWN_FEATURES: OwnFeatureSet = {
@@ -34,6 +35,7 @@ export const OWN_FEATURES: OwnFeatureSet = {
   typeHierarchy: true,
   rename: true,
   codeAction: true,
+  codeLens: true,
 };
 
 /** 兼容别名：T2 时期的导出名 */
@@ -60,6 +62,7 @@ export function mergeCapabilities(officialCaps: Record<string, unknown>, own: Ow
   override('typeHierarchyProvider', true, own.typeHierarchy);
   override('renameProvider', { prepareProvider: true }, own.rename);
   override('codeActionProvider', { codeActionKinds: ['quickfix', 'source'], resolveProvider: true }, own.codeAction);
+  override('codeLensProvider', { resolveProvider: true }, own.codeLens);
 
   return caps;
 }

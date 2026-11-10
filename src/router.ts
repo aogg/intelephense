@@ -26,6 +26,8 @@ const OWN_HANDLED = new Set([
   'textDocument/prepareRename',
   'textDocument/codeAction',
   'codeAction/resolve',
+  'textDocument/codeLens',
+  'codeLens/resolve',
 ]);
 
 /** 双引擎合并处理（转发官方 + 引擎并行） */
@@ -190,6 +192,10 @@ export class Router {
         return this.engine.codeActions(params);
       case 'codeAction/resolve':
         return this.engine.codeActionResolve(params as any);
+      case 'textDocument/codeLens':
+        return this.engine.codeLenses(params.textDocument?.uri);
+      case 'codeLens/resolve':
+        return this.engine.codeLensResolve((params as any)?.codeLens ?? {});
       default:
         return null;
     }
