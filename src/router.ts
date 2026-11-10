@@ -19,6 +19,9 @@ const OWN_HANDLED = new Set([
   'textDocument/typeDefinition',
   'textDocument/implementation',
   'textDocument/declaration',
+  'textDocument/prepareTypeHierarchy',
+  'typeHierarchy/supertypes',
+  'typeHierarchy/subtypes',
 ]);
 
 /** 双引擎合并处理（转发官方 + 引擎并行） */
@@ -169,6 +172,12 @@ export class Router {
         return this.engine.implementation(params);
       case 'textDocument/declaration':
         return this.engine.declaration(params);
+      case 'textDocument/prepareTypeHierarchy':
+        return this.engine.prepareTypeHierarchy(params);
+      case 'typeHierarchy/supertypes':
+        return this.engine.typeHierarchySupertypes(params.item);
+      case 'typeHierarchy/subtypes':
+        return this.engine.typeHierarchySubtypes(params.item);
       default:
         return null;
     }

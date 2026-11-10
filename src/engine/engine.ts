@@ -21,6 +21,7 @@ import {
 import { navigationTypeDefinition } from '../features/typeDefinition';
 import { navigationImplementation } from '../features/implementation';
 import { navigationDeclaration } from '../features/declaration';
+import { prepareTypeHierarchy, typeHierarchySupertypes, typeHierarchySubtypes, type TypeHierarchyItem } from '../features/typeHierarchy';
 import { computeFoldingRanges, type FoldingRange } from '../features/folding';
 import { computeSelectionRanges, type SelectionRange } from '../features/selectionRange';
 import { computeDocumentLinks, type DocumentLink } from '../features/documentLink';
@@ -181,6 +182,18 @@ export class Engine {
 
   async declaration(params: DefinitionParamsLike): Promise<LocationLike[] | null> {
     return navigationDeclaration(this, params);
+  }
+
+  prepareTypeHierarchy(params: DefinitionParamsLike): Promise<TypeHierarchyItem[] | null> {
+    return prepareTypeHierarchy(this, params);
+  }
+
+  typeHierarchySupertypes(item: TypeHierarchyItem): Promise<TypeHierarchyItem[] | null> {
+    return typeHierarchySupertypes(this, item);
+  }
+
+  typeHierarchySubtypes(item: TypeHierarchyItem): Promise<TypeHierarchyItem[] | null> {
+    return typeHierarchySubtypes(this, item);
   }
 
   foldingRanges(uri: string): FoldingRange[] {

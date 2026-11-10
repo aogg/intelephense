@@ -31,7 +31,7 @@ export const OWN_FEATURES: OwnFeatureSet = {
   typeDefinition: true,
   declaration: true,
   implementation: true,
-  typeHierarchy: false,
+  typeHierarchy: true,
   rename: false,
   codeAction: false,
 };
@@ -57,6 +57,7 @@ export function mergeCapabilities(officialCaps: Record<string, unknown>, own: Ow
   override('typeDefinitionProvider', true, own.typeDefinition);
   override('implementationProvider', true, own.implementation);
   override('declarationProvider', true, own.declaration);
+  override('typeHierarchyProvider', true, own.typeHierarchy);
 
   return caps;
 }

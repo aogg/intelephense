@@ -150,8 +150,8 @@ function sortLocations(list: LocationLike[]): LocationLike[] {
   return list.sort((a, b) => a.uri.localeCompare(b.uri) || a.range.start.line - b.range.start.line || a.range.start.character - b.range.start.character);
 }
 
-/** 声明处命中：类/接口/trait 名称本身，或方法声明名 */
-function declarationAt(doc: any, line: number, character: number): { kind: 'class'; cls: ClassSym } | { kind: 'method'; cls: ClassSym; method: any } | undefined {
+/** 声明处命中：类/接口/trait 名称本身，或方法声明名（declaration/typeHierarchy 共用） */
+export function declarationAt(doc: any, line: number, character: number): { kind: 'class'; cls: ClassSym } | { kind: 'method'; cls: ClassSym; method: any } | undefined {
   const classNodes: { sym: ClassSym; node: any }[] = doc.classNodes ?? [];
   for (const { sym, node } of classNodes) {
     if (inRange(sym.selectionRange, line, character)) return { kind: 'class', cls: sym };
