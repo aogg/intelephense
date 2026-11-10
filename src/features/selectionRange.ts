@@ -50,9 +50,10 @@ function buildChain(doc: ParsedDoc, nodes: any[], pos: { line: number; character
     return { range };
   }
 
-  // 从最内层往外构建
+  // 反向迭代构建（chain 升序：先最外层后最内层入链，最后入链的最内层成为返回根）——
+  // LSP 规范：result[i] 为光标处最内层 range，parent 必须严格包含 child 并向外扩选
   let current: SelectionRange | undefined;
-  for (let i = 0; i < chain.length; i++) {
+  for (let i = chain.length - 1; i >= 0; i--) {
     const seg = chain[i];
     const range = {
       start: offsetToPos(lineIndex, seg.start),
