@@ -30,7 +30,7 @@ export interface LocationLike {
 
 /** ---------- 内部：光标解析 ---------- */
 
-interface MemberHit {
+export interface MemberHit {
   kind: 'member';
   ref: MemberRef;
   typeFqns: string[];
@@ -38,12 +38,14 @@ interface MemberHit {
   memberRange: LocationLike['range'];
 }
 
-interface ClassHit {
+export interface ClassHit {
   kind: 'class';
   sym: ClassSym;
 }
 
-function containingNodes(doc: ParsedDoc, line: number, character: number): any[] {
+export type CursorHit = MemberHit | ClassHit;
+
+export function containingNodes(doc: ParsedDoc, line: number, character: number): any[] {
   const out: any[] = [];
   walk(doc.ast, (node) => {
     const loc = node.loc;
@@ -59,7 +61,7 @@ function containingNodes(doc: ParsedDoc, line: number, character: number): any[]
   return out;
 }
 
-async function hitAtPosition(engine: NavigationEngine, doc: ParsedDoc, line: number, character: number): Promise<MemberHit | ClassHit | undefined> {
+export async function hitAtPosition(engine: NavigationEngine, doc: ParsedDoc, line: number, character: number): Promise<CursorHit | undefined> {
   const ctx = engine.ctx;
   const view: ParsedDocLike = { uri: doc.uri, ast: doc.ast, classNodes: (doc as any).classNodes ?? [] };
   const ownerClass = enclosingClass(view, line, character);

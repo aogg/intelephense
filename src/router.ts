@@ -6,7 +6,7 @@
  * - 绝不过滤官方通知（合规 §5d）。
  */
 
-import { mergeInitializeResponse, T2_OWN_FEATURES } from './caps';
+import { mergeInitializeResponse, OWN_FEATURES } from './caps';
 import { mergeCompletions, pickLocations, pickHover } from './merge';
 import type { JsonRpcMessage } from './framer';
 import type { Engine } from './engine/engine';
@@ -16,6 +16,7 @@ const OWN_HANDLED = new Set([
   'textDocument/foldingRange',
   'textDocument/selectionRange',
   'textDocument/documentLink',
+  'textDocument/typeDefinition',
 ]);
 
 /** 双引擎合并处理（转发官方 + 引擎并行） */
@@ -111,7 +112,7 @@ export class Router {
       if (!pending && this.isInitializeResponse(msg)) {
         const result = (msg.result ?? {}) as Record<string, unknown>;
         try {
-          msg = { ...msg, result: mergeInitializeResponse(result, T2_OWN_FEATURES, VERSION) };
+          msg = { ...msg, result: mergeInitializeResponse(result, OWN_FEATURES, VERSION) };
         } catch {
           // 合并失败时透传原始响应
         }
@@ -160,6 +161,8 @@ export class Router {
         return this.engine.hover(params);
       case 'textDocument/completion':
         return this.engine.completion(params);
+      case 'textDocument/typeDefinition':
+        return this.engine.typeDefinition(params);
       default:
         return null;
     }

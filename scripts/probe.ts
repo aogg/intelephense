@@ -208,6 +208,22 @@ async function main(): Promise<void> {
       hoverPass ? `markdown 含 "Auth" 与 "$auth"；摘录: ${hoverVal.split('\n').filter((s: string) => s.includes('Auth')).slice(0, 3).join(' / ')}` : `contents=${summarize(hoverResp.result?.contents)}`,
     );
 
+    // typeDefinition on auth → Auth 类声明（app/admin/library/Auth.php）
+    const authClsAbs = path.join(ZUODIAN_ROOT, 'application', 'admin', 'library', 'Auth.php');
+    const authClsText = fs.readFileSync(authClsAbs, 'utf8');
+    const authClsUri = 'file://' + authClsAbs;
+    const authDeclPos = locate(authClsText, 'class Auth');
+    const typeDefResp = await client.send('textDocument/typeDefinition', { textDocument: { uri: PRODUCT_URI }, position: authChar }).done;
+    const typeDefs: any[] = Array.isArray(typeDefResp.result) ? typeDefResp.result : typeDefResp.result ? [typeDefResp.result] : [];
+    const typeDefHit = typeDefs.find((d) => typeof d?.uri === 'string' && d.uri.endsWith('admin/library/Auth.php') && d.range?.start?.line === authDeclPos.line);
+    record(
+      'typeDefinition($this->auth) → Auth 类声明（A 通道类型）',
+      !!typeDefHit,
+      typeDefHit
+        ? `${typeDefHit.uri.split('/').slice(-1)[0]} @ 0-based line=${typeDefHit.range.start.line}（1-based ${typeDefHit.range.start.line + 1}）结果数=${typeDefs.length}`
+        : `无命中：${summarize(typeDefResp.result)}（期望 ${authClsUri.split('/').pop()} line=${authDeclPos.line}）`,
+    );
+
     // 3) completion: $this-> 包含 auth（继承自 Backend）
     const thisArrow = locate(productText, '$this->model = new ProductModel();');
     const completionPos = { line: thisArrow.line, character: thisArrow.character + '$this->'.length };

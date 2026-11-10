@@ -7,21 +7,37 @@
  *  - positionEncoding 等协商字段不改写。
  * T2 自研已实现：foldingRange / selectionRange / documentLink（provider 声明）；
  * definition/hover/completion 走拦截合并，官方本就注册 true，无需改声明。
- * rename/typeDefinition/declaration/implementation/typeHierarchy/codeAction/codeLens/inlayHint
- * 本阶段未实现 → 维持官方免费值（false/缺席），不虚假声明。
+ * T3 起逐个落地：typeDefinition → implementation → declaration → typeHierarchy
+ * → rename → codeAction（每项随功能 commit 翻牌为 true，未实现项维持 false，不虚假声明）。
+ * codeLens/inlayHint 本阶段未实现 → 维持官方免费值（缺席），不虚假声明。
  */
 
 export interface OwnFeatureSet {
   foldingRange: boolean;
   selectionRange: boolean;
   documentLink: boolean;
+  typeDefinition: boolean;
+  declaration: boolean;
+  implementation: boolean;
+  typeHierarchy: boolean;
+  rename: boolean;
+  codeAction: boolean;
 }
 
-export const T2_OWN_FEATURES: OwnFeatureSet = {
+export const OWN_FEATURES: OwnFeatureSet = {
   foldingRange: true,
   selectionRange: true,
   documentLink: true,
+  typeDefinition: true,
+  declaration: false,
+  implementation: false,
+  typeHierarchy: false,
+  rename: false,
+  codeAction: false,
 };
+
+/** 兼容别名：T2 时期的导出名 */
+export const T2_OWN_FEATURES = OWN_FEATURES;
 
 export function mergeCapabilities(officialCaps: Record<string, unknown>, own: OwnFeatureSet): Record<string, unknown> {
   const caps: Record<string, unknown> = { ...officialCaps };
@@ -38,6 +54,7 @@ export function mergeCapabilities(officialCaps: Record<string, unknown>, own: Ow
   override('foldingRangeProvider', {}, own.foldingRange);
   override('selectionRangeProvider', {}, own.selectionRange);
   override('documentLinkProvider', { resolveProvider: false }, own.documentLink);
+  override('typeDefinitionProvider', true, own.typeDefinition);
 
   return caps;
 }
