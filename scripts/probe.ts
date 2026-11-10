@@ -9,6 +9,12 @@
  *   4. foldingRange / selectionRange（三基础功能之二）
  *   5. documentLink（合成 include 文档，__DIR__ 解析）
  *   6. C 通道（赋值推断兜底）：合成 ProbeService/ProbeBase/ProbeChild 文档 hover $this->svc → ProbeService
+ *   7. typeHierarchy 三方法（真实文件）：prepare(Product)/supertypes→Backend、prepare($this->auth)→Auth、
+ *      prepare(Driver)/subtypes→Mysql+Redis、supertypes(Driver)→空（抽象根诚实降级）
+ *   8. rename（addons 临时 fixture，探针结束清理；客户端内存 apply 不落盘）：类改名 WorkspaceEdit 断言
+ *      （renameFile + use 行/docblock/new/instanceof/静态引用更新 + 字符串 FQN + 双命名空间 decoy 零误改）
+ *   9. codeAction 三类各一例（内存合成）：自动 import（唯一候选+字母序插入）、批量实现抽象方法（带类型 stub）、
+ *      生成 PHPDoc（@param/@return 联合/@throws）
  *
  * 输出逐项 PASS/FAIL 与证据；全过 exit 0，否则 exit 1。
  *
@@ -181,6 +187,7 @@ async function main(): Promise<void> {
       textDocument: { uri: PRODUCT_URI, languageId: 'php', version: 1, text: productText },
     });
 
+    const productClassPos = locate(productText, 'class Product');
     const authPos = locate(productText, '$this->auth->check');
     const authChar = { line: authPos.line, character: authPos.character + '$this->'.length };
     const expectedLine55 = authPos.line; // 0 基；与 1 基 54 行一致
@@ -456,6 +463,416 @@ class ProbeChild extends ProbeBase
       cPass,
       cPass ? `markdown 含 "ProbeService"；摘录: ${cVal.split('\n').slice(0, 4).join(' / ')}` : `contents=${summarize(cHover.result?.contents)}`,
     );
+
+    // ---------- 8) typeHierarchy：真实文件三方法 ----------
+    const prepProduct = await client.send('textDocument/prepareTypeHierarchy', {
+      textDocument: { uri: PRODUCT_URI },
+      position: { line: productClassPos.line, character: productClassPos.character + 'class '.length + 2 },
+    }).done;
+    const prepItems: any[] = Array.isArray(prepProduct.result) ? prepProduct.result : [];
+    const productPrep = prepItems.find((it) => it?.data?.fqn === 'app\\admin\\controller\\product\\Product');
+    record(
+      'typeHierarchy/prepare(Product 声明) → TypeHierarchyItem',
+      !!productPrep,
+      productPrep ? `fqn=${productPrep.data.fqn} kind=${productPrep.kind} name=${productPrep.name}` : `结果=${summarize(prepProduct.result)}`,
+    );
+
+    const supResp = productPrep
+      ? await client.send('typeHierarchy/supertypes', { item: productPrep }).done
+      : { result: [] };
+    const sups: any[] = Array.isArray(supResp.result) ? supResp.result : [];
+    const backendSup = sups.find((s) => s?.name === 'Backend' && typeof s?.uri === 'string' && s.uri.endsWith('common/controller/Backend.php'));
+    record(
+      'typeHierarchy/supertypes(Product) → Backend（继承上溯，跨文件）',
+      !!backendSup,
+      backendSup ? `上溯=${sups.map((s) => s.name).join(', ')}（含 Backend @ 0-based line=${backendSup.range.start.line}）` : `结果=${summarize(supResp.result)}`,
+    );
+
+    const prepAuth = await client.send('textDocument/prepareTypeHierarchy', { textDocument: { uri: PRODUCT_URI }, position: authChar }).done;
+    const authItems: any[] = Array.isArray(prepAuth.result) ? prepAuth.result : [];
+    const authItem = authItems.find((it) => it?.data?.fqn === 'app\\admin\\library\\Auth');
+    record(
+      'typeHierarchy/prepare($this->auth) → Auth（成员类型通道）',
+      !!authItem,
+      authItem ? `fqn=${authItem.data.fqn} uri=…${authItem.uri.split('/').slice(-2).join('/')}` : `结果=${summarize(prepAuth.result)}`,
+    );
+
+    const prepDriver = await client.send('textDocument/prepareTypeHierarchy', {
+      textDocument: { uri: driverUri },
+      position: { line: driverClassPos.line, character: driverClassPos.character + 'abstract class '.length + 2 },
+    }).done;
+    const driverItems: any[] = Array.isArray(prepDriver.result) ? prepDriver.result : [];
+    const driverPrep = driverItems[0];
+    const subResp = driverPrep ? await client.send('typeHierarchy/subtypes', { item: driverPrep }).done : { result: [] };
+    const subs: any[] = Array.isArray(subResp.result) ? subResp.result : [];
+    const subMysql = subs.find((s) => s?.name === 'Mysql');
+    const subRedis = subs.find((s) => s?.name === 'Redis');
+    record(
+      'typeHierarchy/subtypes(Driver) → Mysql + Redis（子类树下溯）',
+      !!subMysql && !!subRedis,
+      !!subMysql && !!subRedis ? `下溯=${subs.map((s) => s.name).join(', ')}` : `结果=${summarize(subResp.result)}`,
+    );
+
+    const supDriverResp = driverPrep ? await client.send('typeHierarchy/supertypes', { item: driverPrep }).done : { result: [] };
+    const supsDriver: any[] = Array.isArray(supDriverResp.result) ? supDriverResp.result : [];
+    record(
+      'typeHierarchy/supertypes(Driver) → 空（抽象根诚实降级）',
+      supsDriver.length === 0,
+      `上溯结果数=${supsDriver.length}（vendor 外无父类不虚构）`,
+    );
+
+    // ---------- 9) rename：addons 临时 fixture（不落盘应用，结束后清理） ----------
+    const REN_DIR = path.join(ZUODIAN_ROOT, 'addons', 'proberen');
+    const DEC_DIR = path.join(ZUODIAN_ROOT, 'addons', 'probedecoy');
+    const OLD_URI = 'file://' + path.join(REN_DIR, 'OldThing.php');
+    const USER_URI = 'file://' + path.join(REN_DIR, 'User.php');
+    const CFG_URI = 'file://' + path.join(REN_DIR, 'config.php');
+    const DECOY_URI = 'file://' + path.join(DEC_DIR, 'OldThing.php');
+    const DECOY_USER_URI = 'file://' + path.join(DEC_DIR, 'DecoyUser.php');
+    const renTexts: Record<string, string> = {
+      [OLD_URI]: `<?php
+namespace addons\\proberen;
+
+class OldThing
+{
+    public static $count = 0;
+
+    public function ping(): string
+    {
+        return 'pong';
+    }
+}
+`,
+      [USER_URI]: `<?php
+namespace addons\\proberen;
+
+use addons\\proberen\\OldThing;
+
+/**
+ * 用户
+ * @see OldThing
+ */
+class User
+{
+    /** @var OldThing */
+    public $thing;
+
+    public function go(): OldThing
+    {
+        $t = new OldThing();
+        assert($t instanceof OldThing);
+        $t->ping();
+        OldThing::$count++;
+        return $t;
+    }
+}
+`,
+      [CFG_URI]: `<?php
+return [
+    'target' => 'addons\\proberen\\OldThing',
+    'negative' => 'addons\\proberen\\OldThingExtra',
+];
+`,
+      [DECOY_URI]: `<?php
+namespace addons\\other;
+
+class OldThing
+{
+    public function pong(): int
+    {
+        return 1;
+    }
+}
+`,
+      [DECOY_USER_URI]: `<?php
+namespace addons\\other;
+
+class DecoyUser
+{
+    public function t(): OldThing
+    {
+        return new OldThing();
+    }
+}
+`,
+    };
+    fs.mkdirSync(REN_DIR, { recursive: true });
+    fs.mkdirSync(DEC_DIR, { recursive: true });
+    for (const [uri, text] of Object.entries(renTexts)) {
+      fs.writeFileSync(uri.slice('file://'.length), text, 'utf8');
+      client.notify('textDocument/didOpen', { textDocument: { uri, languageId: 'php', version: 1, text } });
+    }
+
+    const oldLines = renTexts[OLD_URI].split('\n');
+    const oldDeclLine = oldLines.findIndex((l) => l.startsWith('class OldThing'));
+    const oldPos = { line: oldDeclLine, character: oldLines[oldDeclLine].indexOf('Old') + 2 };
+    const prepRen = await client.send('textDocument/prepareRename', { textDocument: { uri: OLD_URI }, position: oldPos }).done;
+    const prepOk = prepRen.result?.placeholder === 'OldThing' && typeof prepRen.result?.range?.start?.line === 'number';
+    record(
+      'prepareRename(OldThing 声明) → placeholder + range',
+      prepOk,
+      prepOk ? `placeholder=${prepRen.result.placeholder} range=0-based line=${prepRen.result.range.start.line}` : `结果=${summarize(prepRen.result)}`,
+    );
+
+    const renResp = await client.send('textDocument/rename', { textDocument: { uri: OLD_URI }, position: oldPos, newName: 'NewThing' }).done;
+    const docChanges: any[] = Array.isArray(renResp.result?.documentChanges) ? renResp.result.documentChanges : [];
+    const renameFile = docChanges.find((c) => c.kind === 'rename');
+    const editChanges = docChanges.filter((c) => c.kind === 'edit');
+    const editedUris = new Set(editChanges.map((c) => c.textDocument.uri));
+    const renameFileOk = !!renameFile && renameFile.oldUri.endsWith('/addons/proberen/OldThing.php') && renameFile.newUri.endsWith('/addons/proberen/NewThing.php');
+    record(
+      'rename(类) → documentChanges 含 renameFile（PSR-4 路径随名迁移）',
+      renameFileOk,
+      renameFileOk ? `renameFile: ${renameFile.oldUri.split('/').slice(-2).join('/')} → ${renameFile.newUri.split('/').slice(-2).join('/')}` : `结果=${summarize(renResp.result)}`,
+    );
+
+    const decoyUntouched = !editedUris.has(DECOY_URI) && !editedUris.has(DECOY_USER_URI);
+    const coreTouched = editedUris.has(OLD_URI) && editedUris.has(USER_URI) && editedUris.has(CFG_URI);
+    record(
+      'rename(类) → 编辑按文件分组：本体/User/config 均更新，双命名空间 decoy 零误改',
+      decoyUntouched && coreTouched,
+      `编辑文件数=${editChanges.length}：${[...editedUris].map((u) => u.split('/').slice(-2).join('/')).join(', ')}；decoy 未触碰=${decoyUntouched}`,
+    );
+
+    // 客户端内存 apply（不落盘）
+    const li = [0];
+    const applyEdits = (text: string, edits: any[]): string => {
+      const starts: number[] = [0];
+      for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) starts.push(i + 1);
+      const at = (p: any) => starts[Math.min(p.line, starts.length - 1)] + p.character;
+      const sorted = [...edits].sort((a: any, b: any) => at(b.range.start) - at(a.range.start));
+      let t = text;
+      for (const e of sorted) {
+        const s = at(e.range.start);
+        const en = at(e.range.end);
+        t = t.slice(0, s) + e.newText + t.slice(en);
+      }
+      return t;
+    };
+    const applied: Record<string, string> = {};
+    for (const [uri, text] of Object.entries(renTexts)) applied[uri] = text;
+    for (const c of editChanges) {
+      applied[c.textDocument.uri] = applyEdits(applied[c.textDocument.uri], c.edits);
+    }
+    // renameFile：内存视图切换键
+    if (renameFileOk) {
+      applied[renameFile.newUri] = applied[renameFile.oldUri];
+      delete applied[renameFile.oldUri];
+    }
+
+    const userApplied = applied[USER_URI] ?? '';
+    const userChecks = [
+      ['use 行更新', userApplied.includes('use addons\\proberen\\NewThing;') && !userApplied.includes('use addons\\proberen\\OldThing;')],
+      ['docblock @see/@var 更新', userApplied.includes('@see NewThing') && userApplied.includes('@var NewThing')],
+      ['new/instanceof/返回类型更新', userApplied.includes('new NewThing()') && userApplied.includes('instanceof NewThing') && userApplied.includes(': NewThing')],
+      ['静态类引用更新', userApplied.includes('NewThing::$count')],
+      ['旧名残留', !/\bOldThing\b/.test(userApplied)],
+    ];
+    const userOk = userChecks.every(([, ok]) => ok);
+    record(
+      'rename(类) → User.php 内存 apply：use/docblock/new/instanceof/静态引用全部更新且无旧名残留',
+      userOk,
+      userOk
+        ? `use addons\\proberen\\NewThing; @see/@var NewThing new NewThing() instanceof NewThing NewThing::\$count 全命中；旧名残留=0`
+        : `未命中项：${userChecks.filter(([, ok]) => !ok).map(([n]) => n).join('、')}`,
+    );
+
+    const cfgApplied = applied[CFG_URI] ?? '';
+    const cfgOk = cfgApplied.includes("'addons\\proberen\\NewThing'") && cfgApplied.includes('OldThingExtra');
+    record(
+      'rename(类) → 字符串 FQN 引用（think\\Config 形式）更新，前缀防误配',
+      cfgOk,
+      cfgOk ? `target 更新为 addons\\proberen\\NewThing；negative OldThingExtra 保持不变` : `结果=${summarize(cfgApplied)}`,
+    );
+
+    const oldApplied = applied[renameFileOk ? renameFile.newUri : OLD_URI] ?? '';
+    const declOk = oldApplied.includes('class NewThing') && !oldApplied.includes('class OldThing');
+    record(
+      'rename(类) → 声明处类名更新（renameFile 后内存视图）',
+      declOk,
+      declOk ? 'class NewThing ✓ 无 class OldThing 残留' : `结果=${summarize(oldApplied.slice(0, 200))}`,
+    );
+
+    // ---------- 10) codeAction 三类各一例（内存合成） ----------
+    // a) 自动 import：唯一候选 + 字母序插入
+    const IMP_SVC = 'file://' + path.join(ZUODIAN_ROOT, 'application', 'probe', 'imp', 'Payment.php');
+    const IMP_CALLER = 'file://' + path.join(ZUODIAN_ROOT, 'application', 'probe', 'imp', 'Shop.php');
+    const impSvcText = `<?php
+namespace app\\probe\\pay;
+
+class Payment
+{
+    public function total(): float
+    {
+        return 0.0;
+    }
+}
+`;
+    const impCallerText = `<?php
+
+namespace app\\probe\\ca;
+
+use app\\probe\\ca\\AlphaHelper;
+use app\\probe\\ca\\ZetaTool;
+
+class Shop
+{
+    public function pay(): Payment
+    {
+        return new Payment();
+    }
+}
+`;
+    client.notify('textDocument/didOpen', { textDocument: { uri: IMP_SVC, languageId: 'php', version: 1, text: impSvcText } });
+    client.notify('textDocument/didOpen', { textDocument: { uri: IMP_CALLER, languageId: 'php', version: 1, text: impCallerText } });
+    const payLine = impCallerText.split('\n').findIndex((l) => l.includes(': Payment'));
+    const payPos = { line: payLine, character: impCallerText.split('\n')[payLine].indexOf('Payment') + 3 };
+    const impActs = await client.send('textDocument/codeAction', {
+      textDocument: { uri: IMP_CALLER },
+      range: { start: payPos, end: payPos },
+      context: { diagnostics: [] },
+    }).done;
+    const impList: any[] = Array.isArray(impActs.result) ? impActs.result : [];
+    const importAction = impList.find((a) => a?.kind === 'quickfix' && typeof a?.title === 'string' && a.title.includes('Import') && a.title.includes('app\\probe\\pay\\Payment'));
+    let importOk = false;
+    let importEvidence = `actions=${summarize(impList.map((a) => a?.title))}`;
+    if (importAction) {
+      const resolved = await client.send('codeAction/resolve', importAction).done;
+      const edits = resolved.result?.edit?.changes?.[IMP_CALLER] ?? [];
+      let text = impCallerText;
+      const starts: number[] = [0];
+      for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) starts.push(i + 1);
+      const at = (p: any) => starts[Math.min(p.line, starts.length - 1)] + p.character;
+      for (const e of [...edits].sort((a: any, b: any) => at(b.range.start) - at(a.range.start))) {
+        const s = at(e.range.start);
+        const en = at(e.range.end);
+        text = text.slice(0, s) + e.newText + text.slice(en);
+      }
+      const zetaLine = text.split('\n').findIndex((l) => l.includes('use app\\probe\\ca\\ZetaTool;'));
+      const payUseLine = text.split('\n').findIndex((l) => l.includes('use app\\probe\\pay\\Payment;'));
+      importOk = payUseLine > 0 && payUseLine > zetaLine;
+      importEvidence = importOk ? `resolve 后 use 行按全 FQN 字母序插入 ZetaTool 之后：ZetaTool@${zetaLine} < Payment@${payUseLine}；title="${importAction.title}"` : `插入位置异常：Payment@${payUseLine} ZetaTool@${zetaLine}`;
+    }
+    record('codeAction/resolve(自动 import) → use 行字母序插入', importOk, importEvidence);
+
+    // b) 批量实现抽象方法：带类型 stub
+    const IMP_IF = 'file://' + path.join(ZUODIAN_ROOT, 'application', 'probe', 'imp', 'Transport.php');
+    const IMPL_CLS = 'file://' + path.join(ZUODIAN_ROOT, 'application', 'probe', 'imp', 'Express.php');
+    const ifText = `<?php
+namespace app\\probe\\imp;
+
+interface Transport
+{
+    public function ship(string $from, string $to, int $weight = 1): bool;
+    public static function cost(float $d): float;
+}
+`;
+    const clsText = `<?php
+namespace app\\probe\\imp;
+
+class Express implements Transport
+{
+    public function label(): string
+    {
+        return 'SF';
+    }
+}
+`;
+    client.notify('textDocument/didOpen', { textDocument: { uri: IMP_IF, languageId: 'php', version: 1, text: ifText } });
+    client.notify('textDocument/didOpen', { textDocument: { uri: IMPL_CLS, languageId: 'php', version: 1, text: clsText } });
+    const clsLine = clsText.split('\n').findIndex((l) => l.includes('class Express'));
+    const implActs = await client.send('textDocument/codeAction', {
+      textDocument: { uri: IMPL_CLS },
+      range: { start: { line: clsLine, character: 10 }, end: { line: clsLine, character: 10 } },
+      context: { diagnostics: [] },
+    }).done;
+    const implList: any[] = Array.isArray(implActs.result) ? implActs.result : [];
+    const implAction = implList.find((a) => a?.kind === 'quickfix' && typeof a?.title === 'string' && a.title.includes('实现抽象方法'));
+    let implOk = false;
+    let implEvidence = `actions=${summarize(implList.map((a) => a?.title))}`;
+    if (implAction) {
+      const resolved = await client.send('codeAction/resolve', implAction).done;
+      const stub = (resolved.result?.edit?.changes?.[IMPL_CLS] ?? []).map((e: any) => e.newText).join('');
+      implOk = stub.includes('public function ship(string $from, string $to, int $weight = 1): bool') && stub.includes('public static function cost(float $d): float');
+      implEvidence = implOk ? `stub 含完整类型标注与默认值：ship(string,string,int=1):bool + static cost(float):float（title="${implAction.title}"）` : `stub=${summarize(stub)}`;
+    }
+    record('codeAction/resolve(批量实现抽象方法) → 类型化 stub', implOk, implEvidence);
+
+    // c) 生成 PHPDoc：@param / @return 联合 / @throws
+    const DOC_URI = 'file://' + path.join(ZUODIAN_ROOT, 'application', 'probe', 'imp', 'Report.php');
+    const docText2 = `<?php
+namespace app\\probe\\imp;
+
+class Report
+{
+    public function build(Payment $svc, int $copies = 1): ?string
+    {
+        if ($copies < 0) {
+            throw new \\InvalidArgumentException('bad copies');
+        }
+        $svc->total();
+        return new PaymentReceipt($copies);
+    }
+
+    public function render(int $mode)
+    {
+        if ($mode === 1) {
+            return 'text';
+        }
+        return 42;
+    }
+}
+`;
+    client.notify('textDocument/didOpen', { textDocument: { uri: DOC_URI, languageId: 'php', version: 1, text: docText2 } });
+    const buildLine = docText2.split('\n').findIndex((l) => l.includes('function build'));
+    const docActs = await client.send('textDocument/codeAction', {
+      textDocument: { uri: DOC_URI },
+      range: { start: { line: buildLine, character: 24 }, end: { line: buildLine, character: 24 } },
+      context: { diagnostics: [] },
+    }).done;
+    const docList: any[] = Array.isArray(docActs.result) ? docActs.result : [];
+    const docAction = docList.find((a) => a?.kind === 'source' && typeof a?.title === 'string' && a.title.includes('PHPDoc'));
+    let docOk = false;
+    let docEvidence = `actions=${summarize(docList.map((a) => a?.title))}`;
+    if (docAction) {
+      const resolved = await client.send('codeAction/resolve', docAction).done;
+      const block = (resolved.result?.edit?.changes?.[DOC_URI] ?? []).map((e: any) => e.newText).join('');
+      const checks = [
+        block.includes('@param Payment $svc'),
+        block.includes('@param int $copies'),
+        block.includes('@return ?string'),
+        block.includes('@throws \\InvalidArgumentException'),
+      ];
+      docOk = checks.every(Boolean);
+      docEvidence = docOk ? `docblock 含 @param Payment $svc / @param int $copies / @return ?string / @throws \\InvalidArgumentException` : `缺失项=${checks.filter((c) => !c).length}；block=${summarize(block)}`;
+    }
+    record('codeAction/resolve(生成 PHPDoc) → @param/@return ?Type/@throws', docOk, docEvidence);
+
+    const renderLine = docText2.split('\n').findIndex((l) => l.includes('function render'));
+    const docActs2 = await client.send('textDocument/codeAction', {
+      textDocument: { uri: DOC_URI },
+      range: { start: { line: renderLine, character: 26 }, end: { line: renderLine, character: 26 } },
+      context: { diagnostics: [] },
+    }).done;
+    const docList2: any[] = Array.isArray(docActs2.result) ? docActs2.result : [];
+    const docAction2 = docList2.find((a) => a?.kind === 'source');
+    let renderOk = false;
+    let renderEvidence = `actions=${summarize(docList2.map((a) => a?.title))}`;
+    if (docAction2) {
+      const resolved = await client.send('codeAction/resolve', docAction2).done;
+      const block = (resolved.result?.edit?.changes?.[DOC_URI] ?? []).map((e: any) => e.newText).join('');
+      renderOk = block.includes('@param int $mode') && block.includes('@return string|int');
+      renderEvidence = renderOk ? '多 return 字面量联合 @return string|int + @param int $mode' : `block=${summarize(block)}`;
+    }
+    record('codeAction/resolve(生成 PHPDoc) → 多 return 联合类型', renderOk, renderEvidence);
+
+    // fixture 清理（探针不留痕）
+    try {
+      fs.rmSync(REN_DIR, { recursive: true, force: true });
+      fs.rmSync(DEC_DIR, { recursive: true, force: true });
+    } catch {
+      // 清理失败不影响探针结论
+    }
 
     // 汇总
     const failed = results.filter((r) => !r.pass);
