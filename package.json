@@ -12,7 +12,8 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.probe.json",
-    "probe": "node dist/probe.js"
+    "probe": "node dist/probe.js",
+    "test": "node test/run-all.js"
   },
   "dependencies": {
     "intelephense": "^1.18.5",
