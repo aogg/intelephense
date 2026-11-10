@@ -211,3 +211,5 @@ intelephense-openidea/
 | 用户持 licenceKey 时行为分歧 | 默认自研优先保持一致性；`premiumPassthrough` 配置项交还官方 premium（合规且尊重授权），探针脚本负责回归对比 |
 | 官方包版本升级 | 锁 lockfile；升级后重跑 license 审查（条款随版本可能变化）与能力探针 |
 | 误报噪声毁掉口碑 | 所有推断失败一律 unknown + 静默降级，绝不虚构跳转与诊断 |
+| didClose 后镜像缓存设计性保留（engine.ts closeDocument 明示「文本缓存保留供索引」），长会话内存增长已知 | 保留是跨文件解析正确性的前提；后续可评估按引用计数/空闲逐出，本阶段不改 |
+| implementation 全仓扫描在大仓库上耗时 7.5~32s（现势记录，非缺陷） | 现状不改，先正确后性能；候选优化：继承反向索引直查替代全量遍历 |
