@@ -54,14 +54,16 @@ export async function computeInlayHints(
 ): Promise<InlayHintLike[]> {
   const doc = await engine.getDoc(uri);
   if (!doc) return [];
+  // 全量收集（遍历按文档序），先按请求 range 过滤、再按文档位排序、最后施加 500 上限——
+  // 反序会截掉文档前部（500 上限耗尽在文档尾），显式 range 请求也会被截空
   const hints: InlayHintLike[] = [];
   walkNodes(doc.ast, (node) => {
-    if (hints.length >= MAX_HINTS) return;
     if (node.kind === 'call') collectParamHints(doc, node, hints);
     else if (node.kind === 'method' || node.kind === 'function') collectReturnHint(doc, node, hints);
     else if (node.kind === 'assign') collectClosureHint(doc, node, hints);
   });
   const filtered = range ? hints.filter((h) => positionInRange(h.position, range)) : hints;
+  filtered.sort((a, b) => a.position.line - b.position.line || a.position.character - b.position.character);
   return filtered.slice(0, MAX_HINTS);
 }
 
@@ -391,22 +393,22 @@ function literalTypeOf(expr: any): string | undefined {
 
 /** ---------- 小工具 ---------- */
 
+/** AST 遍历：children 正序、深度优先（文档序）——LIFO pop 会从文档尾向前访问，顺序敏感的产出必须用它 */
 function walkNodes(root: any, visit: (node: any) => void): void {
-  const stack: any[] = [root];
-  while (stack.length > 0) {
-    const node = stack.pop();
-    if (!node || typeof node !== 'object') continue;
+  const visitNode = (node: any): void => {
+    if (!node || typeof node !== 'object') return;
     if (Array.isArray(node)) {
-      stack.push(...node);
-      continue;
+      for (const child of node) visitNode(child);
+      return;
     }
     if (typeof node.kind === 'string') visit(node);
     for (const key of Object.keys(node)) {
       if (key === 'loc' || key === 'leadingComments' || key === 'trailingComments') continue;
       const value = (node as Record<string, unknown>)[key];
-      if (value && typeof value === 'object') stack.push(value);
+      if (value && typeof value === 'object') visitNode(value);
     }
-  }
+  };
+  visitNode(root);
 }
 
 /** offset 精确命中某类节点（resolve 重定位） */
