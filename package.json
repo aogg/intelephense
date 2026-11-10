@@ -15,7 +15,8 @@
     "probe": "node dist/probe.js"
   },
   "dependencies": {
-    "intelephense": "^1.18.5"
+    "intelephense": "^1.18.5",
+    "php-parser": "^3.7.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
