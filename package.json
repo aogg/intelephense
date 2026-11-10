@@ -11,7 +11,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.probe.json",
     "probe": "node dist/probe.js"
   },
   "dependencies": {
