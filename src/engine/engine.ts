@@ -21,6 +21,7 @@ import {
 import { navigationTypeDefinition } from '../features/typeDefinition';
 import { navigationImplementation } from '../features/implementation';
 import { navigationDeclaration } from '../features/declaration';
+import { relationDefinition } from '../features/relation';
 import { prepareTypeHierarchy, typeHierarchySupertypes, typeHierarchySubtypes, type TypeHierarchyItem } from '../features/typeHierarchy';
 import { prepareRename, rename, type PrepareRenameResult, type RenameWorkspaceEdit, type RenameParamsLike } from '../features/rename';
 import { codeActions, codeActionResolve, type CodeActionLike, type CodeActionParamsLike } from '../features/codeAction';
@@ -178,7 +179,11 @@ export class Engine {
   // ---------- features 门面 ----------
 
   async definition(params: DefinitionParamsLike): Promise<LocationLike[] | null> {
-    return navigationDefinition(this, params);
+    const own = await navigationDefinition(this, params);
+    if (own && own.length > 0) return own;
+    // 主通道（成员/类引用）未命中：ThinkPHP 关联跳转补强
+    // （with/load/loadRelation/has 字符串实参 → 关联方法；方法名 __call 转发全局兜底）
+    return relationDefinition(this, params);
   }
 
   async hover(params: DefinitionParamsLike): Promise<Record<string, unknown> | null> {

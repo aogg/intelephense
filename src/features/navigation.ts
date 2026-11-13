@@ -153,7 +153,8 @@ function staticClassFqns(whatNode: any, doc: ParsedDoc, ownerClass: ClassSym | u
   return resolveTypeRaw(raw, ctx.index.files.get(doc.uri), ownerClass?.fqn);
 }
 
-function inLoc(line: number, character: number, loc: any): boolean {
+/** 0 基 LSP 位置是否落在 php-parser loc 内（navigation 与 relation 共用的光标落点判定） */
+export function inLoc(line: number, character: number, loc: any): boolean {
   const sl = loc.start.line - 1;
   const el = loc.end.line - 1;
   if (line < sl || line > el) return false;
