@@ -10,6 +10,7 @@
  *   D2 php.toml 两种拉起形态（--stdio / 无参数）initialize
  *   A  用户验收底线（zuodian 真实文件 $this->auth 四角度 + typeHierarchy + @property 通道）
  *   B  全功能扫描（真实文件优先，合成文档补齐）
+ *   E  relation 关联跳转（合成 fixture 复刻 zuodian 形态：P0 字符串/数组/复合名/负样本 + P1 __call 转发）
  *   C  健壮性（语法错误 / 增量 didChange / didClose / 配置转发 / 大文件耗时）
  *   D3 官方免费透传不退化（references / documentSymbol / workspaceSymbol / formatting）
  *   C6 生命周期（initialize → shutdown → exit 干净退出 + 无悬挂子进程，独立客户端）
@@ -34,6 +35,7 @@ const { LspClient } = require('./helpers/lsp');
 const T = require('./helpers/text');
 const groupA = require('./groups/a-acceptance');
 const groupB = require('./groups/b-features');
+const groupE = require('./groups/e-relation');
 const groupC = require('./groups/c-robustness');
 const groupD = require('./groups/d-env');
 
@@ -170,6 +172,7 @@ async function main() {
     // ---------- 用例组 ----------
     await groupA(ctx);
     await groupB(ctx);
+    await groupE(ctx);
     await groupC.robustness(ctx);
     await groupD.passthrough(ctx);
   } finally {
