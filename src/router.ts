@@ -35,6 +35,24 @@ const OWN_HANDLED = new Set([
 /** 双引擎合并处理（转发官方 + 引擎并行） */
 const MERGED_HANDLED = new Set(['textDocument/definition', 'textDocument/hover', 'textDocument/completion']);
 
+/**
+ * MERGED 通道等待自研引擎结果的上限（毫秒）。
+ * 取舍：官方引擎的 definition/hover/completion 结果免费且极快（实测 ~13ms），
+ * completeMerged 绝不能被自研 ownPromise 无限阻塞——自研引擎一旦挂死（大项目扫描/解析
+ * pathological 文件），官方的好结果会被无限期扣住，用户侧表现为跳转全灭。
+ * 因此官方响应到达后只给自研一个有上限的合并窗口（竞速）：自研增强迟到则本次降级为纯官方
+ * 结果回包（跳转/悬停/补全即时恢复；自研结果不丢弃，仅本次不合并）。
+ */
+const MERGED_OWN_WAIT_MS = 300;
+
+/** 竞速败者哨兵：MERGED_OWN_WAIT_MS 后 resolve，用于区分「自研无结果(null)」与「合并窗口超时」 */
+const OWN_TIMED_OUT = Symbol('own-timed-out');
+
+/** 竞速败者：MERGED_OWN_WAIT_MS 后 resolve(OWN_TIMED_OUT)，仅用于给合并窗口封顶 */
+function ownWaitTimeout(): Promise<typeof OWN_TIMED_OUT> {
+  return new Promise((resolve) => setTimeout(() => resolve(OWN_TIMED_OUT), MERGED_OWN_WAIT_MS));
+}
+
 interface PendingMerged {
   method: string;
   ownPromise: Promise<unknown>;
@@ -66,7 +84,13 @@ export class Router {
         return;
       }
       if (MERGED_HANDLED.has(method)) {
-        this.pendingMerged.set(id as number, { method, ownPromise: this.computeOwn(method, msg) });
+        // 防未捕获拒绝：ownPromise 的 rejection 必须在创建处就被捕获降级为 null（带日志），
+        // 保证任何时刻不存在游离的未处理 rejection（此前官方响应先回时它会直接崩掉进程）。
+        const ownPromise = this.computeOwn(method, msg).catch((err: unknown) => {
+          process.stderr.write(`[intelephense-openidea] merged ${method} own engine failed: ${String(err)}\n`);
+          return null;
+        });
+        this.pendingMerged.set(id as number, { method, ownPromise });
         this.sendToServer(msg);
         return;
       }
@@ -219,10 +243,14 @@ export class Router {
 
   private async completeMerged(id: number, pending: PendingMerged, serverMsg: JsonRpcMessage): Promise<void> {
     this.pendingMerged.delete(id);
-    let own: unknown = null;
-    try {
-      own = await pending.ownPromise;
-    } catch {
+    // 有上限的竞速：官方响应已到达，只给自研 MERGED_OWN_WAIT_MS 的合并窗口。
+    // 自研挂死/迟到 → 本次降级为纯官方回包，绝不无限期扣住官方结果。
+    // ownPromise 在创建处已挂 .catch（永不 reject），这里无需再兜 try/catch。
+    let own: unknown = await Promise.race([pending.ownPromise, ownWaitTimeout()]);
+    if (own === OWN_TIMED_OUT) {
+      process.stderr.write(
+        `[intelephense-openidea] merged ${pending.method}: own engine exceeded ${MERGED_OWN_WAIT_MS}ms, degrading to official-only\n`,
+      );
       own = null;
     }
 

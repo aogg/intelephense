@@ -27,6 +27,24 @@ export interface DefinitionParamsLike {
   position: { line: number; character: number };
 }
 
+/**
+ * textDocument+position 形态参数的共用守卫：params/position/textDocument.uri 为 null、非对象、
+ * 缺 uri，或坐标不是有限非负数时返回 undefined，调用方必须诚实回 null（result:null）。
+ * 严禁抛异常绕过守卫：MERGED 通道（definition/hover/completion）里自研结果先于官方响应
+ * 落地前，rejection 是未捕获拒绝，会直接崩掉中间件进程（已在 router 侧兜底，这里源头拦截）。
+ */
+export function validPositionParams(params: unknown): { uri: string; line: number; character: number } | undefined {
+  const p = params as DefinitionParamsLike | undefined | null;
+  const uri = p?.textDocument?.uri;
+  if (typeof uri !== 'string' || uri.length === 0) return undefined;
+  const pos = p?.position;
+  if (!pos || typeof pos !== 'object') return undefined;
+  const { line, character } = pos as { line: unknown; character: unknown };
+  if (typeof line !== 'number' || !Number.isFinite(line) || line < 0) return undefined;
+  if (typeof character !== 'number' || !Number.isFinite(character) || character < 0) return undefined;
+  return { uri, line, character };
+}
+
 export interface LocationLike {
   uri: string;
   range: { start: { line: number; character: number }; end: { line: number; character: number } };
@@ -147,9 +165,11 @@ function inLoc(line: number, character: number, loc: any): boolean {
 /** ---------- definition ---------- */
 
 export async function navigationDefinition(engine: NavigationEngine, params: DefinitionParamsLike): Promise<LocationLike[] | null> {
-  const doc = await engine.getDoc(params.textDocument.uri);
+  const p = validPositionParams(params);
+  if (!p) return null;
+  const doc = await engine.getDoc(p.uri);
   if (!doc) return null;
-  const hit = await hitAtPosition(engine, doc, params.position.line, params.position.character);
+  const hit = await hitAtPosition(engine, doc, p.line, p.character);
   if (!hit) return null;
   if (hit.kind === 'class') {
     return [{ uri: hit.sym.uri, range: hit.sym.selectionRange }];
@@ -175,9 +195,11 @@ export async function navigationDefinition(engine: NavigationEngine, params: Def
 /** ---------- hover ---------- */
 
 export async function navigationHover(engine: NavigationEngine, params: DefinitionParamsLike): Promise<Record<string, unknown> | null> {
-  const doc = await engine.getDoc(params.textDocument.uri);
+  const p = validPositionParams(params);
+  if (!p) return null;
+  const doc = await engine.getDoc(p.uri);
   if (!doc) return null;
-  const hit = await hitAtPosition(engine, doc, params.position.line, params.position.character);
+  const hit = await hitAtPosition(engine, doc, p.line, p.character);
   if (!hit) return null;
 
   const lines: string[] = [];
@@ -219,13 +241,15 @@ export async function navigationHover(engine: NavigationEngine, params: Definiti
 export interface CompletionParamsLike extends DefinitionParamsLike {}
 
 export async function navigationCompletion(engine: NavigationEngine, params: CompletionParamsLike): Promise<Record<string, unknown>[] | null> {
-  const doc = await engine.getDoc(params.textDocument.uri);
+  const p = validPositionParams(params);
+  if (!p) return null;
+  const doc = await engine.getDoc(p.uri);
   if (!doc) return null;
   const view: ParsedDocLike = { uri: doc.uri, ast: doc.ast, classNodes: (doc as any).classNodes ?? [] };
-  const ownerClass = enclosingClass(view, params.position.line, params.position.character);
+  const ownerClass = enclosingClass(view, p.line, p.character);
 
   // 找接收者节点：位置往前找最近的 -> 与其左边的接收者表达式
-  const receiverNode = findReceiverNode(doc, params.position.line, params.position.character);
+  const receiverNode = findReceiverNode(doc, p.line, p.character);
   if (!receiverNode) return null;
 
   let receiverFqns: string[];
@@ -238,7 +262,7 @@ export async function navigationCompletion(engine: NavigationEngine, params: Com
   if (receiverFqns.length === 0) return null;
 
   // 前缀过滤（光标在成员名中间时）
-  const prefix = typedPrefix(doc, params.position.line, params.position.character);
+  const prefix = typedPrefix(doc, p.line, p.character);
 
   const items: Record<string, unknown>[] = [];
   const seen = new Set<string>();

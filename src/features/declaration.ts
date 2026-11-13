@@ -10,14 +10,16 @@
 import { plainName } from '../engine/ast';
 import { resolveTypeRaw } from '../engine/resolver';
 import type { ClassSym } from '../engine/symbols';
-import { docblockPropertyTagRange, hitAtPosition, type NavigationEngine, type DefinitionParamsLike, type LocationLike } from './navigation';
+import { docblockPropertyTagRange, hitAtPosition, validPositionParams, type NavigationEngine, type DefinitionParamsLike, type LocationLike } from './navigation';
 import { implementationsOfMember } from './implementation';
 
 export async function navigationDeclaration(engine: NavigationEngine, params: DefinitionParamsLike): Promise<LocationLike[] | null> {
-  const doc = await engine.getDoc(params.textDocument.uri);
+  const p = validPositionParams(params);
+  if (!p) return null;
+  const doc = await engine.getDoc(p.uri);
   if (!doc) return null;
-  const line = params.position.line;
-  const character = params.position.character;
+  const line = p.line;
+  const character = p.character;
   const hit = (await hitAtPosition(engine, doc, line, character)) ?? declarationRefAt(doc, line, character);
   if (!hit) return null;
 

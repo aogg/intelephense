@@ -10,7 +10,7 @@ import { plainName } from '../engine/ast';
 import { resolveTypeRaw } from '../engine/resolver';
 import type { ClassSym } from '../engine/symbols';
 import type { MemberRef } from '../engine/member';
-import { hitAtPosition, type NavigationEngine, type DefinitionParamsLike, type LocationLike } from './navigation';
+import { hitAtPosition, validPositionParams, type NavigationEngine, type DefinitionParamsLike, type LocationLike } from './navigation';
 
 /** 类的继承关系集合：extends 链（classes，含自身）+ implements/接口 extends（interfaces） */
 export interface HierarchySets {
@@ -174,10 +174,12 @@ function inRange(range: LocationLike['range'], line: number, character: number):
 }
 
 export async function navigationImplementation(engine: NavigationEngine, params: DefinitionParamsLike): Promise<LocationLike[] | null> {
-  const doc = await engine.getDoc(params.textDocument.uri);
+  const p = validPositionParams(params);
+  if (!p) return null;
+  const doc = await engine.getDoc(p.uri);
   if (!doc) return null;
-  const line = params.position.line;
-  const character = params.position.character;
+  const line = p.line;
+  const character = p.character;
 
   const hit = await hitAtPosition(engine, doc, line, character);
   if (hit) {

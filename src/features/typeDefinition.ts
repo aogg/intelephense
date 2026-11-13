@@ -7,15 +7,17 @@
  *  - 推不出类型 → 返回 null（诚实降级，不误跳）。
  */
 
-import { hitAtPosition, containingNodes, type NavigationEngine, type DefinitionParamsLike, type LocationLike } from './navigation';
+import { hitAtPosition, containingNodes, validPositionParams, type NavigationEngine, type DefinitionParamsLike, type LocationLike } from './navigation';
 import { enclosingClass, resolveReceiverFqns, type ParsedDocLike } from '../engine/member';
 import type { ClassSym } from '../engine/symbols';
 
 export async function navigationTypeDefinition(engine: NavigationEngine, params: DefinitionParamsLike): Promise<LocationLike[] | null> {
-  const doc = await engine.getDoc(params.textDocument.uri);
+  const p = validPositionParams(params);
+  if (!p) return null;
+  const doc = await engine.getDoc(p.uri);
   if (!doc) return null;
-  const line = params.position.line;
-  const character = params.position.character;
+  const line = p.line;
+  const character = p.character;
   const hit = await hitAtPosition(engine, doc, line, character);
   if (hit) {
     const fqns = hit.kind === 'class' ? [hit.sym.fqn] : hit.typeFqns;
